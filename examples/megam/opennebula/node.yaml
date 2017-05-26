@@ -3,31 +3,8 @@ kind: Template
 apiVersion: v1
 metadata:
   name: opennebula-node
-  creationTimestamp:
-  annotations:
-    openshift.io/display-name: OpenNebula(Node)
-    description: |-
-      OpenNebula node that connects to  OpenNebula front-end. For more information about using this template, including MegamVertice considerations, see https://github.com/megamsys/kubeshift.
-
-      WARNING: Any data stored will be lost upon pod destruction.
-    iconClass: icon-machine
-    tags: compute,opennebula,node
-    template.openshift.io/long-description: This template provides a standalone OpenNebula
-      node server that connects to OpenNebula master.  The OpenNebula front-end connects to the node
-      via port 2222.
-    template.openshift.io/provider-display-name: Megam Systems.
-    template.openshift.io/documentation-url: https://docs.megam.io/abcd
-    template.openshift.io/support-url: https://github.com/megamsys/support
-message: |-
-  The following service(s) have been created in your project: ${ONE_SERVICE_NAME}.
-
-         Username: ${ONE_USER}
-         Password:
-   Connection URL: http://${ONE_SERVICE_NAME}:5432/
-
-  For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
 labels:
-  template: opennebula-ephemeral-template
+  template: one-node
 objects:
 - kind: Service
   apiVersion: v1
@@ -36,37 +13,18 @@ objects:
     creationTimestamp:
   spec:
     ports:
-    - name: onemaster
-      protocol: TCP
-      port: 9869
-      targetPort: 9869
-      nodePort: 0
+    - name: onenode
+      port: 2222
+      targetPort: 2222
     selector:
       name: "${ONE_SERVICE_NAME}"
-    type: ClusterIP
-    sessionAffinity: None
-  status:
-    loadBalancer: {}
 - kind: DeploymentConfig
   apiVersion: v1
   metadata:
     name: "${ONE_SERVICE_NAME}"
     creationTimestamp:
   spec:
-    strategy:
-      type: Recreate
-    triggers:
-    - type: ImageChange
-      imageChangeParams:
-        automatic: true
-        containerNames:
-        - megamio/docker_onemaster
-        from:
-          kind: ImageStreamTag
-          name: megamio/docker_onemaster:${ONE_VERSION}
-          namespace: "${NAMESPACE}"
-        lastTriggeredImage: ''
-    - type: ConfigChange
+    restartPolicy: Never
     replicas: 1
     selector:
       name: "${ONE_SERVICE_NAME}"
@@ -77,78 +35,54 @@ objects:
           name: "${ONE_SERVICE_NAME}"
       spec:
         containers:
-        - name: megamio/docker_onemaster
-          image: " "
-          ports:
-          - containerPort: 9869
-            protocol: HTTP
-          readinessProbe:
-            timeoutSeconds: 1
-            initialDelaySeconds: 5
-            exec:
-              command:
-              - "/bin/sh"
-              - "-i"
-              - "-c"
-              - psql -h 127.0.0.1 -U $ONE_USER -q -d $POSTGRESQL_DATABASE -c
-                'SELECT 1'
-          livenessProbe:
-            timeoutSeconds: 1
-            initialDelaySeconds: 30
-            tcpSocket:
-              port: 5432
+        - name: onenode
+          image: "megamio/docker_onenode:latest"
+          imagePullPolicy: "IfNotPresent"
           env:
-          - name: ONE_USER
+          - name: ssh_public
             valueFrom:
               secretKeyRef:
-                name: "${ONE_SERVICE_NAME}"
-                key: one-user
+                name: ssh
+                key: ssh-publickey
+          ports:
+          - containerPort: 2222
           resources:
             limits:
               memory: "${MEMORY_LIMIT}"
-          volumeMounts:
-          - name: "${ONE_SERVICE_NAME}-data"
-            mountPath: "/var/lib/pgsql/data"
-          terminationMessagePath: "/dev/termination-log"
-          imagePullPolicy: IfNotPresent
-          capabilities: {}
-          securityContext:
-            capabilities: {}
-            privileged: false
+        volumeMounts:
+         - name: "libvirt-lib"
+           mountPath: "/var/lib/libvirt/"
+         - name: "libvirt-run"
+           mountPath: "/var/run/libvirt/"
+         - name: "dbus-run"
+           mountPath: "/var/run/dbus/"
+         - name: "ceph-conf"
+           mountPath: "/etc/ceph"
+         - name: "ceph-lib"
+           mountPath: "/var/lib/ceph/"
+         - name: "datastore-data"
+           mountPath: "/var/lib/one/datastores/"
+
         volumes:
-        - name: "${ONE_SERVICE_NAME}-data"
-          emptyDir:
-            medium: ''
-        restartPolicy: Always
-        dnsPolicy: ClusterFirst
+        - name: "libvirt-lib"
+          emptyDir: {}
+        - name: "libvirt-run"
+          emptyDir: {}
+        - name: "ceph-conf"
+          emptyDir: {}
+        - name: "ceph-lib"
+          emptyDir: {}
+        - name: "datastore-data"
+          emptyDir: {}
   status: {}
 parameters:
-- name: MEMORY_LIMIT
-  displayName: Memory Limit
-  description: Maximum amount of memory the container can use.
-  value: 512Mi
-  required: true
-- name: NAMESPACE
-  displayName: Namespace
-  description: The OpenShift Namespace where the ImageStream resides.
-  value: megamio
 - name: ONE_SERVICE_NAME
   displayName: OpenNebula Service Name
   description: The name of the ABCD Service exposed for OpenNebula.
   value: onenode
   required: true
-- name: ONE_USER
-  displayName: OpenNebua Username
-  description: Username for OpenNebula user.
-  value: oneadmin
-  required: true
-- name: ONE_DATASTORE
-  displayName: OpenNebula Datastore
-  description: Name of the OpenNebula datastore accessed.
-  value: datastore
-  required: true
-- name: ONE_VERSION
-  displayName: Version of OpenNebula
-  description: Version of OpenNebula image to be used (5.2 or latest).
-  value: 'latest'
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Maximum amount of memory the container can use.
+  value: 512Mi
   required: true
