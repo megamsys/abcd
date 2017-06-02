@@ -3,9 +3,9 @@ package v1
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	kapi "k8s.io/kubernetes/pkg/api/v1"
-	kruntime "k8s.io/kubernetes/pkg/runtime"
 )
 
 // Authorization is calculated against
@@ -38,14 +38,16 @@ type PolicyRule struct {
 
 // IsPersonalSubjectAccessReview is a marker for PolicyRule.AttributeRestrictions that denotes that subjectaccessreviews on self should be allowed
 type IsPersonalSubjectAccessReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 }
+
+// +genclient=true
 
 // Role is a logical grouping of PolicyRules that can be referenced as a unit by RoleBindings.
 type Role struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Rules holds all the PolicyRules for this Role
 	Rules []PolicyRule `json:"rules" protobuf:"bytes,2,rep,name=rules"`
@@ -60,13 +62,15 @@ func (t OptionalNames) String() string {
 	return fmt.Sprintf("%v", []string(t))
 }
 
+// +genclient=true
+
 // RoleBinding references a Role, but not contain it.  It can reference any Role in the same namespace or in the global namespace.
 // It adds who information via (Users and Groups) OR Subjects and namespace information by which namespace it exists in.
 // RoleBindings in a given namespace only have effect in that namespace (excepting the master namespace which has power in all namespaces).
 type RoleBinding struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// UserNames holds all the usernames directly bound to the role.
 	// This field should only be specified when supporting legacy clients and servers.
@@ -98,12 +102,12 @@ type NamedRoles []NamedRole
 // Policy is a object that holds all the Roles for a particular namespace.  There is at most
 // one Policy document per namespace.
 type Policy struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// LastModified is the last time that any part of the Policy was created, updated, or deleted
-	LastModified unversioned.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
+	LastModified metav1.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
 
 	// Roles holds all the Roles held by this Policy, mapped by Role.Name
 	Roles NamedRoles `json:"roles" protobuf:"bytes,3,rep,name=roles"`
@@ -111,15 +115,17 @@ type Policy struct {
 
 type NamedRoleBindings []NamedRoleBinding
 
+// +genclient=true
+
 // PolicyBinding is a object that holds all the RoleBindings for a particular namespace.  There is
 // one PolicyBinding document per referenced Policy namespace
 type PolicyBinding struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// LastModified is the last time that any part of the PolicyBinding was created, updated, or deleted
-	LastModified unversioned.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
+	LastModified metav1.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
 
 	// PolicyRef is a reference to the Policy that contains all the Roles that this PolicyBinding's RoleBindings may reference
 	PolicyRef kapi.ObjectReference `json:"policyRef" protobuf:"bytes,3,opt,name=policyRef"`
@@ -145,7 +151,7 @@ type NamedRoleBinding struct {
 
 // SelfSubjectRulesReview is a resource you can create to determine which actions you can perform in a namespace
 type SelfSubjectRulesReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Spec adds information about how to conduct the check
 	Spec SelfSubjectRulesReviewSpec `json:"spec" protobuf:"bytes,1,opt,name=spec"`
@@ -158,12 +164,13 @@ type SelfSubjectRulesReview struct {
 type SelfSubjectRulesReviewSpec struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil means "use the scopes on this request".
+	// +k8s:conversion-gen=false
 	Scopes OptionalScopes `json:"scopes" protobuf:"bytes,1,rep,name=scopes"`
 }
 
 // SubjectRulesReview is a resource you can create to determine which actions another user can perform in a namespace
 type SubjectRulesReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Spec adds information about how to conduct the check
 	Spec SubjectRulesReviewSpec `json:"spec" protobuf:"bytes,1,opt,name=spec"`
@@ -193,7 +200,7 @@ type SubjectRulesReviewStatus struct {
 
 // ResourceAccessReviewResponse describes who can perform the action
 type ResourceAccessReviewResponse struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Namespace is the namespace used for the access review
 	Namespace string `json:"namespace,omitempty" protobuf:"bytes,1,opt,name=namespace"`
@@ -213,7 +220,7 @@ type ResourceAccessReviewResponse struct {
 // ResourceAccessReview is a means to request a list of which users and groups are authorized to perform the
 // action specified by spec
 type ResourceAccessReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Action describes the action being tested.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -221,7 +228,7 @@ type ResourceAccessReview struct {
 
 // SubjectAccessReviewResponse describes whether or not a user or group can perform an action
 type SubjectAccessReviewResponse struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Namespace is the namespace used for the access review
 	Namespace string `json:"namespace,omitempty" protobuf:"bytes,1,opt,name=namespace"`
@@ -246,7 +253,7 @@ func (t OptionalScopes) String() string {
 
 // SubjectAccessReview is an object for requesting information about whether a user or group can perform an action
 type SubjectAccessReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Action describes the action being tested.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -258,12 +265,13 @@ type SubjectAccessReview struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil for a self-SAR, means "use the scopes on this request".
 	// Nil for a regular SAR, means the same as empty.
+	// +k8s:conversion-gen=false
 	Scopes OptionalScopes `json:"scopes" protobuf:"bytes,4,rep,name=scopes"`
 }
 
 // LocalResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec in a particular namespace
 type LocalResourceAccessReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Action describes the action being tested.  The Namespace element is FORCED to the current namespace.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -271,7 +279,7 @@ type LocalResourceAccessReview struct {
 
 // LocalSubjectAccessReview is an object for requesting information about whether a user or group can perform an action in a particular namespace
 type LocalSubjectAccessReview struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Action describes the action being tested.  The Namespace element is FORCED to the current namespace.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -283,6 +291,7 @@ type LocalSubjectAccessReview struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil for a self-SAR, means "use the scopes on this request".
 	// Nil for a regular SAR, means the same as empty.
+	// +k8s:conversion-gen=false
 	Scopes OptionalScopes `json:"scopes" protobuf:"bytes,4,rep,name=scopes"`
 }
 
@@ -312,9 +321,9 @@ type Action struct {
 
 // PolicyList is a collection of Policies
 type PolicyList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of Policies
 	Items []Policy `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -322,9 +331,9 @@ type PolicyList struct {
 
 // PolicyBindingList is a collection of PolicyBindings
 type PolicyBindingList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of PolicyBindings
 	Items []PolicyBinding `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -332,9 +341,9 @@ type PolicyBindingList struct {
 
 // RoleBindingList is a collection of RoleBindings
 type RoleBindingList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of RoleBindings
 	Items []RoleBinding `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -342,31 +351,37 @@ type RoleBindingList struct {
 
 // RoleList is a collection of Roles
 type RoleList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of Roles
 	Items []Role `json:"items" protobuf:"bytes,2,rep,name=items"`
 }
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterRole is a logical grouping of PolicyRules that can be referenced as a unit by ClusterRoleBindings.
 type ClusterRole struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Rules holds all the PolicyRules for this ClusterRole
 	Rules []PolicyRule `json:"rules" protobuf:"bytes,2,rep,name=rules"`
 }
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterRoleBinding references a ClusterRole, but not contain it.  It can reference any ClusterRole in the same namespace or in the global namespace.
 // It adds who information via (Users and Groups) OR Subjects and namespace information by which namespace it exists in.
 // ClusterRoleBindings in a given namespace only have effect in that namespace (excepting the master namespace which has power in all namespaces).
 type ClusterRoleBinding struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// UserNames holds all the usernames directly bound to the role.
 	// This field should only be specified when supporting legacy clients and servers.
@@ -393,15 +408,18 @@ type ClusterRoleBinding struct {
 
 type NamedClusterRoles []NamedClusterRole
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterPolicy is a object that holds all the ClusterRoles for a particular namespace.  There is at most
 // one ClusterPolicy document per namespace.
 type ClusterPolicy struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// LastModified is the last time that any part of the ClusterPolicy was created, updated, or deleted
-	LastModified unversioned.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
+	LastModified metav1.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
 
 	// Roles holds all the ClusterRoles held by this ClusterPolicy, mapped by ClusterRole.Name
 	Roles NamedClusterRoles `json:"roles" protobuf:"bytes,3,rep,name=roles"`
@@ -409,15 +427,18 @@ type ClusterPolicy struct {
 
 type NamedClusterRoleBindings []NamedClusterRoleBinding
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterPolicyBinding is a object that holds all the ClusterRoleBindings for a particular namespace.  There is
 // one ClusterPolicyBinding document per referenced ClusterPolicy namespace
 type ClusterPolicyBinding struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// LastModified is the last time that any part of the ClusterPolicyBinding was created, updated, or deleted
-	LastModified unversioned.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
+	LastModified metav1.Time `json:"lastModified" protobuf:"bytes,2,opt,name=lastModified"`
 
 	// PolicyRef is a reference to the ClusterPolicy that contains all the ClusterRoles that this ClusterPolicyBinding's RoleBindings may reference
 	PolicyRef kapi.ObjectReference `json:"policyRef" protobuf:"bytes,3,opt,name=policyRef"`
@@ -443,9 +464,9 @@ type NamedClusterRoleBinding struct {
 
 // ClusterPolicyList is a collection of ClusterPolicies
 type ClusterPolicyList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of ClusterPolicies
 	Items []ClusterPolicy `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -453,9 +474,9 @@ type ClusterPolicyList struct {
 
 // ClusterPolicyBindingList is a collection of ClusterPolicyBindings
 type ClusterPolicyBindingList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of ClusterPolicyBindings
 	Items []ClusterPolicyBinding `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -463,9 +484,9 @@ type ClusterPolicyBindingList struct {
 
 // ClusterRoleBindingList is a collection of ClusterRoleBindings
 type ClusterRoleBindingList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of ClusterRoleBindings
 	Items []ClusterRoleBinding `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -473,9 +494,9 @@ type ClusterRoleBindingList struct {
 
 // ClusterRoleList is a collection of ClusterRoles
 type ClusterRoleList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of ClusterRoles
 	Items []ClusterRole `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -487,10 +508,10 @@ type ClusterRoleList struct {
 // belongs.  If any one of those RoleBindingRestriction objects matches
 // a subject, rolebindings on that subject in the namespace are allowed.
 type RoleBindingRestriction struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Standard object's metadata.
-	kapi.ObjectMeta `json:"metadata" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ObjectMeta `json:"metadata" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Spec defines the matcher.
 	Spec RoleBindingRestrictionSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
@@ -511,10 +532,10 @@ type RoleBindingRestrictionSpec struct {
 
 // RoleBindingRestrictionList is a collection of RoleBindingRestriction objects.
 type RoleBindingRestrictionList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Standard object's metadata.
-	unversioned.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Items is a list of RoleBindingRestriction objects.
 	Items []RoleBindingRestriction `json:"items" protobuf:"bytes,2,rep,name=items"`
@@ -531,7 +552,7 @@ type UserRestriction struct {
 	Groups []string `json:"groups" protobuf:"bytes,2,rep,name=groups"`
 
 	// Selectors specifies a list of label selectors over user labels.
-	Selectors []unversioned.LabelSelector `json:"labels" protobuf:"bytes,3,rep,name=labels"`
+	Selectors []metav1.LabelSelector `json:"labels" protobuf:"bytes,3,rep,name=labels"`
 }
 
 // GroupRestriction matches a group either by a string match on the group name
@@ -543,7 +564,7 @@ type GroupRestriction struct {
 	Groups []string `json:"groups" protobuf:"bytes,1,rep,name=groups"`
 
 	// Selectors specifies a list of label selectors over group labels.
-	Selectors []unversioned.LabelSelector `json:"labels" protobuf:"bytes,2,rep,name=labels"`
+	Selectors []metav1.LabelSelector `json:"labels" protobuf:"bytes,2,rep,name=labels"`
 }
 
 // ServiceAccountRestriction matches a service account by a string match on

@@ -18,11 +18,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	kclientcmd "k8s.io/client-go/tools/clientcmd"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	kclientcmd "k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/util/sets"
 
 	"github.com/openshift/origin/pkg/bootstrap/docker/dockerhelper"
 	"github.com/openshift/origin/pkg/bootstrap/docker/dockermachine"
@@ -121,6 +122,8 @@ var (
 		"heapster standalone": "examples/heapster/heapster-standalone.yaml",
 	}
 	dockerVersion112 = semver.MustParse("1.12.0")
+
+	openshiftVersion36 = semver.MustParse("3.6.0")
 )
 
 // NewCmdUp creates a command that starts openshift on Docker with reasonable defaults
@@ -677,7 +680,7 @@ func (c *ClientStartConfig) EnsureDefaultRedirectURIs(out io.Writer) error {
 		return nil
 	}
 
-	webConsoleOAuth, err := oc.OAuthClients().Get(defaultRedirectClient)
+	webConsoleOAuth, err := oc.OAuthClients().Get(defaultRedirectClient, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
 			fmt.Fprintf(out, "Unable to find OAuthClient %q\n", defaultRedirectClient)
@@ -916,7 +919,18 @@ func (c *ClientStartConfig) ImportTemplates(out io.Writer) error {
 	if err := c.importObjects(out, openshiftNamespace, templateLocations); err != nil {
 		return err
 	}
-	return c.importObjects(out, "kube-system", adminTemplateLocations)
+	version, err := c.OpenShiftHelper().ServerVersion()
+	if err != nil {
+		return err
+	}
+	if shouldImportAdminTemplates(version) {
+		return c.importObjects(out, "kube-system", adminTemplateLocations)
+	}
+	return nil
+}
+
+func shouldImportAdminTemplates(v semver.Version) bool {
+	return v.GTE(openshiftVersion36)
 }
 
 // InstallLogging will start the installation of logging components
@@ -1070,7 +1084,7 @@ func (c *ClientStartConfig) Clients() (*client.Client, kclientset.Interface, err
 // OpenShiftHelper returns a helper object to work with OpenShift on the server
 func (c *CommonStartConfig) OpenShiftHelper() *openshift.Helper {
 	if c.openshiftHelper == nil {
-		c.openshiftHelper = openshift.NewHelper(c.dockerClient, c.HostHelper(), c.openshiftImage(), openshift.OpenShiftContainer, c.PublicHostname, c.RoutingSuffix)
+		c.openshiftHelper = openshift.NewHelper(c.dockerClient, c.DockerHelper(), c.HostHelper(), c.openshiftImage(), openshift.OpenShiftContainer, c.PublicHostname, c.RoutingSuffix)
 	}
 	return c.openshiftHelper
 }
@@ -1250,7 +1264,7 @@ func (c *ClientStartConfig) ShouldInitializeData() bool {
 			return true
 		}
 
-		if _, err = kclient.Core().Services(openshift.DefaultNamespace).Get(openshift.SvcDockerRegistry); err != nil {
+		if _, err = kclient.Core().Services(openshift.DefaultNamespace).Get(openshift.SvcDockerRegistry, metav1.GetOptions{}); err != nil {
 			return true
 		}
 

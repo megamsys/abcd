@@ -3,7 +3,6 @@ package testutil
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -21,8 +20,8 @@ import (
 	"github.com/docker/distribution/registry/client/transport"
 	"github.com/docker/libtrust"
 
-	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/util/diff"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/diff"
 
 	imageapi "github.com/openshift/origin/pkg/image/api"
 )
@@ -108,18 +107,15 @@ func MakeRandomLayers(layerCount int) ([]distribution.Descriptor, []LayerPayload
 	)
 
 	for i := 0; i < layerCount; i++ {
-		rs, ds, err := CreateRandomTarFile()
+		content, err := CreateRandomTarFile()
 		if err != nil {
 			return layers, payloads, fmt.Errorf("unexpected error generating test layer file: %v", err)
 		}
-		dgst := digest.Digest(ds)
 
-		content, err := ioutil.ReadAll(rs)
-		if err != nil {
-			return layers, payloads, fmt.Errorf("unexpected error reading layer data: %v", err)
-		}
-
-		layers = append(layers, distribution.Descriptor{Digest: dgst, Size: int64(len(content))})
+		layers = append(layers, distribution.Descriptor{
+			Digest: digest.FromBytes(content),
+			Size:   int64(len(content)),
+		})
 		payloads = append(payloads, LayerPayload(content))
 	}
 
@@ -206,7 +202,7 @@ func CreateAndUploadTestManifest(
 		if err != nil {
 			return "", "", "", nil, err
 		}
-		_, err = UploadPayloadAsBlob(cfgPayload, serverURL, creds, repoName)
+		_, err = UploadBlob(cfgPayload, serverURL, creds, repoName)
 		if err != nil {
 			return "", "", "", nil, fmt.Errorf("failed to upload manifest config of schema 2: %v", err)
 		}
@@ -337,7 +333,7 @@ func NewImageForManifest(repoName string, rawManifest string, manifestConfig str
 	}
 
 	img := &imageapi.Image{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:        desc.Digest.String(),
 			Annotations: annotations,
 		},

@@ -8,17 +8,17 @@ import (
 
 	"github.com/golang/glog"
 
+	kapierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kapierrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/cache"
 	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/util/workqueue"
-	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/openshift/origin/pkg/cmd/server/crypto"
 	"github.com/openshift/origin/pkg/cmd/server/crypto/extensions"
@@ -56,13 +56,11 @@ type ServiceServingCertController struct {
 	queue      workqueue.RateLimitingInterface
 	maxRetries int
 
-	serviceCache      cache.Store
-	serviceController *cache.Controller
-	serviceHasSynced  informerSynced
+	serviceCache     cache.Store
+	serviceHasSynced cache.InformerSynced
 
-	secretCache      cache.Store
-	secretController *cache.Controller
-	secretHasSynced  informerSynced
+	secretCache     cache.Store
+	secretHasSynced cache.InformerSynced
 
 	ca         *crypto.CA
 	publicCert string
@@ -74,7 +72,7 @@ type ServiceServingCertController struct {
 
 // NewServiceServingCertController creates a new ServiceServingCertController.
 // TODO this should accept a shared informer
-func NewServiceServingCertController(serviceClient kcoreclient.ServicesGetter, secretClient kcoreclient.SecretsGetter, ca *crypto.CA, dnsSuffix string, resyncInterval time.Duration) *ServiceServingCertController {
+func NewServiceServingCertController(services informers.ServiceInformer, secrets informers.SecretInformer, serviceClient kcoreclient.ServicesGetter, secretClient kcoreclient.SecretsGetter, ca *crypto.CA, dnsSuffix string, resyncInterval time.Duration) *ServiceServingCertController {
 	sc := &ServiceServingCertController{
 		serviceClient: serviceClient,
 		secretClient:  secretClient,
@@ -86,17 +84,8 @@ func NewServiceServingCertController(serviceClient kcoreclient.ServicesGetter, s
 		dnsSuffix: dnsSuffix,
 	}
 
-	sc.serviceCache, sc.serviceController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
-				return sc.serviceClient.Services(kapi.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
-				return sc.serviceClient.Services(kapi.NamespaceAll).Watch(options)
-			},
-		},
-		&kapi.Service{},
-		resyncInterval,
+	sc.serviceCache = services.Informer().GetStore()
+	services.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				service := obj.(*kapi.Service)
@@ -110,25 +99,18 @@ func NewServiceServingCertController(serviceClient kcoreclient.ServicesGetter, s
 				sc.enqueueService(cur)
 			},
 		},
-	)
-	sc.serviceHasSynced = sc.serviceController.HasSynced
-
-	sc.secretCache, sc.secretController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
-				return sc.secretClient.Secrets(kapi.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
-				return sc.secretClient.Secrets(kapi.NamespaceAll).Watch(options)
-			},
-		},
-		&kapi.Secret{},
 		resyncInterval,
+	)
+	sc.serviceHasSynced = services.Informer().GetController().HasSynced
+
+	sc.secretCache = secrets.Informer().GetIndexer()
+	secrets.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			DeleteFunc: sc.deleteSecret,
 		},
+		resyncInterval,
 	)
-	sc.secretHasSynced = sc.secretController.HasSynced
+	sc.secretHasSynced = services.Informer().GetController().HasSynced
 
 	sc.syncHandler = sc.syncService
 
@@ -138,19 +120,18 @@ func NewServiceServingCertController(serviceClient kcoreclient.ServicesGetter, s
 // Run begins watching and syncing.
 func (sc *ServiceServingCertController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
-	go sc.serviceController.Run(stopCh)
-	go sc.secretController.Run(stopCh)
-	if !waitForCacheSync(stopCh, sc.serviceHasSynced, sc.secretHasSynced) {
+	defer sc.queue.ShutDown()
+
+	if !cache.WaitForCacheSync(stopCh, sc.serviceHasSynced, sc.secretHasSynced) {
 		return
 	}
 
+	glog.V(5).Infof("Starting workers")
 	for i := 0; i < workers; i++ {
 		go wait.Until(sc.worker, time.Second, stopCh)
 	}
-
 	<-stopCh
-	glog.Infof("Shutting down service signing cert controller")
-	sc.queue.ShutDown()
+	glog.V(1).Infof("Shutting down")
 }
 
 // deleteSecret handles the case when the service certificate secret is manually removed.
@@ -266,7 +247,7 @@ func (sc *ServiceServingCertController) syncService(key string) error {
 	}
 
 	secret := &kapi.Secret{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Namespace: service.Namespace,
 			Name:      service.Annotations[ServingCertSecretAnnotation],
 			Annotations: map[string]string{
@@ -297,7 +278,7 @@ func (sc *ServiceServingCertController) syncService(key string) error {
 		return err
 	}
 	if kapierrors.IsAlreadyExists(err) {
-		actualSecret, err := sc.secretClient.Secrets(service.Namespace).Get(secret.Name)
+		actualSecret, err := sc.secretClient.Secrets(service.Namespace).Get(secret.Name, metav1.GetOptions{})
 		if err != nil {
 			// if we have an error creating the secret, then try to update the service with that information.  If it fails,
 			// then we'll just try again later on  re-list or because the service had already been updated and we'll get triggered again.

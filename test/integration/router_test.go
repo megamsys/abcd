@@ -18,16 +18,16 @@ import (
 	dockerClient "github.com/fsouza/go-dockerclient"
 	"golang.org/x/net/websocket"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	knet "k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	kv1 "k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/intstr"
-	knet "k8s.io/kubernetes/pkg/util/net"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
 	watchjson "k8s.io/kubernetes/pkg/watch/json"
 
 	routeapi "github.com/openshift/origin/pkg/route/api"
@@ -37,8 +37,6 @@ import (
 )
 
 const (
-	defaultRouterImage = "openshift/origin-haproxy-router"
-
 	defaultNamespace = "router-namespace"
 
 	tcWaitSeconds = 1
@@ -319,7 +317,7 @@ func TestRouter(t *testing.T) {
 			Type: tc.endpointEventType,
 
 			Object: &kapi.Endpoints{
-				ObjectMeta: kapi.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      tc.serviceName,
 					Namespace: ns,
 				},
@@ -330,7 +328,7 @@ func TestRouter(t *testing.T) {
 		routeEvent := &watch.Event{
 			Type: tc.routeEventType,
 			Object: &routeapi.Route{
-				ObjectMeta: kapi.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      tc.serviceName,
 					Namespace: ns,
 				},
@@ -356,12 +354,6 @@ func TestRouter(t *testing.T) {
 		if err := waitForRoute(tc.routerUrl, tc.routeAlias, tc.protocol, nil, tc.expectedResponse); err != nil {
 			t.Errorf("TC %s failed: %v", tc.name, err)
 
-			// The following is related to the workaround above, q.v.
-			if getRouterImage() != defaultRouterImage {
-				t.Errorf("You may need to add an entry to /etc/hosts so that the"+
-					" hostname of the router (%s) resolves its the IP address, (%s).",
-					tc.routeAlias, routeAddress)
-			}
 			if strings.Contains(err.Error(), "unavailable the entire time") {
 				break
 			}
@@ -427,7 +419,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 
 	waitForRouterToBecomeAvailable("127.0.0.1", statsPort)
 
-	now := unversioned.Now()
+	now := metav1.Now()
 
 	protocols := []struct {
 		name string
@@ -455,7 +447,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	endpointEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				CreationTimestamp: now,
 				Name:              "myService",
 				Namespace:         "default",
@@ -466,7 +458,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "path",
 				Namespace: "default",
 			},
@@ -511,7 +503,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	endpointEvent = &watch.Event{
 		Type: watch.Added,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "altService",
 				Namespace: "alt",
 			},
@@ -521,8 +513,8 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
-				CreationTimestamp: unversioned.Time{Time: now.Add(time.Hour)},
+			ObjectMeta: metav1.ObjectMeta{
+				CreationTimestamp: metav1.Time{Time: now.Add(time.Hour)},
 				Name:              "path",
 				Namespace:         "alt",
 			},
@@ -559,7 +551,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				CreationTimestamp: now,
 				Name:              "host",
 				Namespace:         "default",
@@ -598,7 +590,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Deleted,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "path",
 				Namespace: "default",
 			},
@@ -642,8 +634,8 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
-				CreationTimestamp: unversioned.Time{Time: now.Add(time.Hour)},
+			ObjectMeta: metav1.ObjectMeta{
+				CreationTimestamp: metav1.Time{Time: now.Add(time.Hour)},
 				Name:              "host",
 				Namespace:         "alt",
 			},
@@ -680,8 +672,8 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
-				CreationTimestamp: unversioned.Time{Time: now.Add(-time.Hour)},
+			ObjectMeta: metav1.ObjectMeta{
+				CreationTimestamp: metav1.Time{Time: now.Add(-time.Hour)},
 				Name:              "host",
 				Namespace:         "alt",
 			},
@@ -718,7 +710,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	routeEvent = &watch.Event{
 		Type: watch.Deleted,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "host",
 				Namespace: "default",
 			},
@@ -741,7 +733,7 @@ func TestRouterPathSpecificity(t *testing.T) {
 	endpointEvent = &watch.Event{
 		Type: watch.Modified,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "myService",
 				Namespace: "default",
 			},
@@ -785,7 +777,7 @@ func TestRouterDuplications(t *testing.T) {
 	endpointEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "myService",
 				Namespace: "default",
 			},
@@ -795,7 +787,7 @@ func TestRouterDuplications(t *testing.T) {
 	exampleRouteEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example",
 				Namespace: "default",
 			},
@@ -810,7 +802,7 @@ func TestRouterDuplications(t *testing.T) {
 	example2RouteEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example2",
 				Namespace: "default",
 			},
@@ -841,7 +833,7 @@ func TestRouterDuplications(t *testing.T) {
 	example2RouteCleanupEvent := &watch.Event{
 		Type: watch.Deleted,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example2",
 				Namespace: "default",
 			},
@@ -857,7 +849,7 @@ func TestRouterDuplications(t *testing.T) {
 	exampleRouteCleanupEvent := &watch.Event{
 		Type: watch.Deleted,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example",
 				Namespace: "default",
 			},
@@ -873,7 +865,7 @@ func TestRouterDuplications(t *testing.T) {
 	endpointCleanupEvent := &watch.Event{
 		Type: watch.Modified,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "myService",
 				Namespace: "default",
 			},
@@ -1439,16 +1431,13 @@ func cleanUp(t *testing.T, dockerCli *dockerClient.Client, routerId string) {
 	})
 }
 
-// getRouterImage is a utility that provides the router image to use by checking to see if OPENSHIFT_ROUTER_IMAGE is set
-// or by using the default image
+// getRouterImage is a utility that provides the router image to use by checking to see if OS_IMAGE_PREFIX is set
 func getRouterImage() string {
-	i := os.Getenv("OPENSHIFT_ROUTER_IMAGE")
-
-	if len(i) == 0 {
-		i = defaultRouterImage
+	imagePrefix := os.Getenv("OS_IMAGE_PREFIX")
+	if len(imagePrefix) == 0 {
+		imagePrefix = "openshift/origin"
 	}
-
-	return i
+	return imagePrefix + "-haproxy-router"
 }
 
 // getRouteAddress checks for the OPENSHIFT_ROUTE_ADDRESS environment
@@ -1470,7 +1459,7 @@ func generateEndpointEvent(t *testing.T, fakeMasterAndPod *tr.TestHttpService, f
 		Type: watch.Added,
 
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      serviceName,
 				Namespace: "event-brite",
 			},
@@ -1492,7 +1481,7 @@ func generateTestEvents(t *testing.T, fakeMasterAndPod *tr.TestHttpService, flag
 	routeEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &routeapi.Route{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      routeName,
 				Namespace: "event-brite",
 			},
@@ -1755,14 +1744,14 @@ func getNamespaceConfig(t *testing.T, namespaceNames *[]string) (namespaceLabels
 	namespaceLabels = fmt.Sprintf("%s=%s", key, value)
 
 	namespaceList := &kapi.NamespaceList{
-		ListMeta: unversioned.ListMeta{
+		ListMeta: metav1.ListMeta{
 			ResourceVersion: fmt.Sprintf("%d", len(*namespaceNames)),
 		},
 		Items: []kapi.Namespace{},
 	}
 	for _, name := range *namespaceNames {
 		namespaceList.Items = append(namespaceList.Items, kapi.Namespace{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:   name,
 				Labels: map[string]string{key: value},
 			},
@@ -1802,7 +1791,7 @@ func ingressConfiguredRouter(t *testing.T, fakeMasterAndPod *tr.TestHttpService)
 	endpointEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &kapi.Endpoints{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      serviceName,
 				Namespace: defaultNamespace,
 			},
@@ -1820,7 +1809,7 @@ func ingressConfiguredRouter(t *testing.T, fakeMasterAndPod *tr.TestHttpService)
 	secretEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &kapi.Secret{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: defaultNamespace,
 			},
@@ -1835,7 +1824,7 @@ func ingressConfiguredRouter(t *testing.T, fakeMasterAndPod *tr.TestHttpService)
 	ingressEvent := &watch.Event{
 		Type: watch.Added,
 		Object: &extensions.Ingress{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:      "foo",
 				Namespace: defaultNamespace,
 			},

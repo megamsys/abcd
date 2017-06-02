@@ -3,8 +3,8 @@ package diagnostics
 import (
 	"fmt"
 
-	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
-	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/sets"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	clientdiags "github.com/openshift/origin/pkg/diagnostics/client"
 	networkdiags "github.com/openshift/origin/pkg/diagnostics/network"
@@ -61,8 +61,11 @@ func (o DiagnosticsOptions) buildClientDiagnostics(rawConfig *clientcmdapi.Confi
 				Level:               o.LogOptions.Level,
 				Factory:             o.Factory,
 				PreventModification: o.PreventModification,
-				LogDir:              o.NetworkDiagLogDir,
-				PodImage:            o.NetworkDiagPodImage,
+				LogDir:              o.NetworkOptions.LogDir,
+				PodImage:            o.NetworkOptions.PodImage,
+				TestPodImage:        o.NetworkOptions.TestPodImage,
+				TestPodProtocol:     o.NetworkOptions.TestPodProtocol,
+				TestPodPort:         o.NetworkOptions.TestPodPort,
 			})
 		default:
 			return nil, false, fmt.Errorf("unknown diagnostic: %v", diagnosticName)

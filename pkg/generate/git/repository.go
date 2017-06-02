@@ -29,8 +29,9 @@ type Repository interface {
 	CloneWithOptions(dir string, url string, args ...string) error
 	CloneBare(dir string, url string) error
 	CloneMirror(dir string, url string) error
-	Fetch(dir string) error
+	Fetch(dir string, url string, ref string) error
 	Checkout(dir string, ref string) error
+	PotentialPRRetryAsFetch(dir string, url string, ref string, err error) error
 	SubmoduleUpdate(dir string, init, recursive bool) error
 	Archive(dir, ref, format string, w io.Writer) error
 	Init(dir string, bare bool) error
@@ -125,6 +126,23 @@ func IsBareRoot(path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// PotentialPRRetryAsFetch is used on checkout errors after a clone where the possibility
+// that a fetch or a PR ref is needed between the clone and checkout operations
+func (r *repository) PotentialPRRetryAsFetch(dir, remote, ref string, err error) error {
+	glog.V(4).Infof("Checkout after clone failed for ref %s with error: %v, attempting fetch", ref, err)
+	err = r.Fetch(dir, remote, ref)
+	if err != nil {
+		return err
+	}
+
+	err = r.Checkout(dir, "FETCH_HEAD")
+	if err != nil {
+		return err
+	}
+	glog.V(4).Infof("Fetch  / checkout for %s successful", ref)
+	return nil
 }
 
 // GetRootDir obtains the directory root for a Git repository
@@ -257,8 +275,8 @@ func (r *repository) TimedListRemote(timeout time.Duration, url string, args ...
 }
 
 // Fetch updates the provided git repository
-func (r *repository) Fetch(location string) error {
-	_, _, err := r.git(location, "fetch", "--all")
+func (r *repository) Fetch(location, uri, ref string) error {
+	_, _, err := r.git(location, "fetch", uri, ref)
 	return err
 }
 
@@ -275,7 +293,7 @@ func (r *repository) Checkout(location string, ref string) error {
 	if r.shallow {
 		return errors.New("cannot checkout ref on shallow clone")
 	}
-	_, _, err := r.git(location, "checkout", ref)
+	_, _, err := r.git(location, "checkout", ref, "--")
 	return err
 }
 

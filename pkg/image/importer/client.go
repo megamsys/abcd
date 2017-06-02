@@ -23,6 +23,7 @@ import (
 	"github.com/docker/distribution/registry/client/auth"
 	"github.com/docker/distribution/registry/client/transport"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
 	"github.com/openshift/origin/pkg/dockerregistry"
@@ -177,7 +178,7 @@ func schema1ToImage(manifest *schema1.SignedManifest, d digest.Digest) (*api.Ima
 		dockerImage.ID = digest.FromBytes(manifest.Canonical).String()
 	}
 	image := &api.Image{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: dockerImage.ID,
 		},
 		DockerImageMetadata:          *dockerImage,
@@ -206,7 +207,7 @@ func schema2ToImage(manifest *schema2.DeserializedManifest, imageConfig []byte, 
 	}
 
 	image := &api.Image{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: dockerImage.ID,
 		},
 		DockerImageMetadata:          *dockerImage,
@@ -219,14 +220,14 @@ func schema2ToImage(manifest *schema2.DeserializedManifest, imageConfig []byte, 
 	return image, nil
 }
 
-func schema0ToImage(dockerImage *dockerregistry.Image, id string) (*api.Image, error) {
+func schema0ToImage(dockerImage *dockerregistry.Image) (*api.Image, error) {
 	var baseImage api.DockerImage
 	if err := kapi.Scheme.Convert(&dockerImage.Image, &baseImage, nil); err != nil {
 		return nil, fmt.Errorf("could not convert image: %#v", err)
 	}
 
 	image := &api.Image{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: dockerImage.ID,
 		},
 		DockerImageMetadata:        baseImage,

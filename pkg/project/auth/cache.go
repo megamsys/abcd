@@ -7,16 +7,14 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/client-go/tools/cache"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/auth/user"
-	"k8s.io/kubernetes/pkg/client/cache"
-	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/types"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
-	utilwait "k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
 
 	authorizationapi "github.com/openshift/origin/pkg/authorization/api"
 	"github.com/openshift/origin/pkg/authorization/authorizer/scope"
@@ -122,7 +120,6 @@ type AuthorizationCache struct {
 	// TODO remove this in favor of a list/watch mechanism for projects
 	allKnownNamespaces        sets.String
 	namespaceStore            cache.Store
-	namespaceInterface        kcoreclient.NamespaceInterface
 	lastSyncResourceVersioner LastSyncResourceVersioner
 
 	clusterPolicyLister             client.SyncedClusterPoliciesListerInterface
@@ -150,16 +147,13 @@ type AuthorizationCache struct {
 }
 
 // NewAuthorizationCache creates a new AuthorizationCache
-func NewAuthorizationCache(reviewer Reviewer, namespaceInterface kcoreclient.NamespaceInterface,
+func NewAuthorizationCache(namespaces cache.SharedIndexInformer, reviewer Reviewer,
 	clusterPolicyLister client.SyncedClusterPoliciesListerInterface, clusterPolicyBindingLister client.SyncedClusterPolicyBindingsListerInterface,
 	policyNamespacer client.SyncedPoliciesListerNamespacer, policyBindingNamespacer client.SyncedPolicyBindingsListerNamespacer,
 ) *AuthorizationCache {
-
-	result := &AuthorizationCache{
-		allKnownNamespaces:        sets.String{},
-		namespaceStore:            cache.NewStore(cache.MetaNamespaceKeyFunc),
-		namespaceInterface:        namespaceInterface,
-		lastSyncResourceVersioner: &unchangingLastSyncResourceVersioner{},
+	ac := &AuthorizationCache{
+		allKnownNamespaces: sets.String{},
+		namespaceStore:     namespaces.GetStore(),
 
 		clusterPolicyResourceVersions:  sets.NewString(),
 		clusterBindingResourceVersions: sets.NewString(),
@@ -179,29 +173,13 @@ func NewAuthorizationCache(reviewer Reviewer, namespaceInterface kcoreclient.Nam
 
 		watchers: []CacheWatcher{},
 	}
-	result.syncHandler = result.syncRequest
-	return result
+	ac.lastSyncResourceVersioner = namespaces.(LastSyncResourceVersioner)
+	ac.syncHandler = ac.syncRequest
+	return ac
 }
 
 // Run begins watching and synchronizing the cache
 func (ac *AuthorizationCache) Run(period time.Duration) {
-
-	namespaceReflector := cache.NewReflector(
-		&cache.ListWatch{
-			ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
-				return ac.namespaceInterface.List(options)
-			},
-			WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
-				return ac.namespaceInterface.Watch(options)
-			},
-		},
-		&kapi.Namespace{},
-		ac.namespaceStore,
-		2*time.Minute,
-	)
-	namespaceReflector.Run()
-	ac.lastSyncResourceVersioner = namespaceReflector
-
 	ac.skip = &statelessSkipSynchronizer{}
 
 	go utilwait.Forever(func() { ac.synchronize() }, period)
@@ -255,7 +233,7 @@ func (ac *AuthorizationCache) synchronizeNamespaces(userSubjectRecordStore cache
 
 // synchronizePolicies synchronizes access over each policy
 func (ac *AuthorizationCache) synchronizePolicies(userSubjectRecordStore cache.Store, groupSubjectRecordStore cache.Store, reviewRecordStore cache.Store) {
-	policyList, err := ac.policyNamespacer.Policies(kapi.NamespaceAll).List(kapi.ListOptions{})
+	policyList, err := ac.policyNamespacer.Policies(metav1.NamespaceAll).List(metav1.ListOptions{})
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
@@ -273,7 +251,7 @@ func (ac *AuthorizationCache) synchronizePolicies(userSubjectRecordStore cache.S
 
 // synchronizePolicyBindings synchronizes access over each policy binding
 func (ac *AuthorizationCache) synchronizePolicyBindings(userSubjectRecordStore cache.Store, groupSubjectRecordStore cache.Store, reviewRecordStore cache.Store) {
-	policyBindingList, err := ac.policyBindingNamespacer.PolicyBindings(kapi.NamespaceAll).List(kapi.ListOptions{})
+	policyBindingList, err := ac.policyBindingNamespacer.PolicyBindings(metav1.NamespaceAll).List(metav1.ListOptions{})
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
@@ -310,7 +288,7 @@ func (ac *AuthorizationCache) purgeDeletedNamespaces(oldNamespaces, newNamespace
 func (ac *AuthorizationCache) invalidateCache() bool {
 	invalidateCache := false
 
-	clusterPolicyList, err := ac.clusterPolicyLister.ClusterPolicies().List(kapi.ListOptions{})
+	clusterPolicyList, err := ac.clusterPolicyLister.ClusterPolicies().List(metav1.ListOptions{})
 	if err != nil {
 		utilruntime.HandleError(err)
 		return invalidateCache
@@ -325,7 +303,7 @@ func (ac *AuthorizationCache) invalidateCache() bool {
 		ac.clusterPolicyResourceVersions = temporaryVersions
 	}
 
-	clusterPolicyBindingList, err := ac.clusterPolicyBindingLister.ClusterPolicyBindings().List(kapi.ListOptions{})
+	clusterPolicyBindingList, err := ac.clusterPolicyBindingLister.ClusterPolicyBindings().List(metav1.ListOptions{})
 	if err != nil {
 		utilruntime.HandleError(err)
 		return invalidateCache

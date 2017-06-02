@@ -25,6 +25,8 @@ project="$( oc project -q )"
 defaultimage="openshift/origin-\${component}:latest"
 USE_IMAGES=${USE_IMAGES:-$defaultimage}
 
+export NODECONFIG="${NODE_CONFIG_DIR}/node-config.yaml"
+
 os::test::junit::declare_suite_start "cmd/admin"
 # This test validates admin level commands including system policy
 
@@ -111,7 +113,7 @@ echo "certs: ok"
 os::test::junit::declare_suite_end
 
 os::test::junit::declare_suite_start "cmd/admin/groups"
-os::cmd::expect_success_and_text 'oadm groups new shortoutputgroup -o name' 'group/shortoutputgroup'
+os::cmd::expect_success_and_text 'oadm groups new shortoutputgroup -o name' 'groups/shortoutputgroup'
 os::cmd::expect_failure_and_text 'oadm groups new shortoutputgroup' 'groups.user.openshift.io "shortoutputgroup" already exists'
 os::cmd::expect_failure_and_text 'oadm groups new errorgroup -o blah' 'error: output format "blah" not recognized'
 os::cmd::expect_failure_and_text 'oc get groups/errorgroup' 'groups.user.openshift.io "errorgroup" not found'
@@ -133,7 +135,6 @@ os::cmd::expect_success_and_text 'oadm policy who-can get Pod' "Resource:  pods"
 os::cmd::expect_success_and_text 'oadm policy who-can get PodASDF' "Resource:  PodASDF"
 os::cmd::expect_success_and_text 'oadm policy who-can get hpa.autoscaling -n default' "Resource:  horizontalpodautoscalers.autoscaling"
 os::cmd::expect_success_and_text 'oadm policy who-can get hpa.v1.autoscaling -n default' "Resource:  horizontalpodautoscalers.autoscaling"
-os::cmd::expect_success_and_text 'oadm policy who-can get hpa.extensions -n default' "Resource:  horizontalpodautoscalers.extensions"
 os::cmd::expect_success_and_text 'oadm policy who-can get hpa -n default' "Resource:  horizontalpodautoscalers.autoscaling"
 
 os::cmd::expect_success 'oadm policy add-role-to-group cluster-admin system:unauthenticated'
@@ -446,12 +447,12 @@ os::cmd::expect_success 'oc delete user  orphaned-user  --cascade=false'
 os::cmd::expect_success 'oc get identities/anypassword:cascaded-user'
 os::cmd::expect_success 'oc get identities/anypassword:orphaned-user'
 # Verify orphaned user references are left
-os::cmd::expect_success_and_text     "oc get clusterrolebindings/cluster-admins --output-version=v1 --template='{{.subjects}}'"            'orphaned-user'
+os::cmd::expect_success_and_text     "oc get clusterrolebindings/cluster-admins clusterrolebindings/cluster-admin --output-version=v1 -o jsonpath='{ .items[*].subjects }'" 'orphaned-user'
 os::cmd::expect_success_and_text     "oc get rolebindings/cluster-admin         --output-version=v1 --template='{{.subjects}}' -n default" 'orphaned-user'
 os::cmd::expect_success_and_text     "oc get scc/restricted                     --output-version=v1 --template='{{.users}}'"               'orphaned-user'
 os::cmd::expect_success_and_text     "oc get group/cascaded-group               --output-version=v1 --template='{{.users}}'"               'orphaned-user'
 # Verify cascaded user references are removed
-os::cmd::expect_success_and_not_text "oc get clusterrolebindings/cluster-admins --output-version=v1 --template='{{.subjects}}'"            'cascaded-user'
+os::cmd::expect_success_and_not_text "oc get clusterrolebindings/cluster-admins clusterrolebindings/cluster-admin --output-version=v1 -o jsonpath='{ .items[*].subjects }'" 'cascaded-user'
 os::cmd::expect_success_and_not_text "oc get rolebindings/cluster-admin         --output-version=v1 --template='{{.subjects}}' -n default" 'cascaded-user'
 os::cmd::expect_success_and_not_text "oc get scc/restricted                     --output-version=v1 --template='{{.users}}'"               'cascaded-user'
 os::cmd::expect_success_and_not_text "oc get group/cascaded-group               --output-version=v1 --template='{{.users}}'"               'cascaded-user'
@@ -460,11 +461,11 @@ os::cmd::expect_success_and_not_text "oc get group/cascaded-group               
 os::cmd::expect_success 'oc delete group cascaded-group'
 os::cmd::expect_success 'oc delete group orphaned-group --cascade=false'
 # Verify orphaned group references are left
-os::cmd::expect_success_and_text     "oc get clusterrolebindings/cluster-admins --output-version=v1 --template='{{.subjects}}'"            'orphaned-group'
+os::cmd::expect_success_and_text     "oc get clusterrolebindings/cluster-admins clusterrolebindings/cluster-admin --output-version=v1 -o jsonpath='{ .items[*].subjects }'" 'orphaned-group'
 os::cmd::expect_success_and_text     "oc get rolebindings/cluster-admin         --output-version=v1 --template='{{.subjects}}' -n default" 'orphaned-group'
 os::cmd::expect_success_and_text     "oc get scc/restricted                     --output-version=v1 --template='{{.groups}}'"              'orphaned-group'
 # Verify cascaded group references are removed
-os::cmd::expect_success_and_not_text "oc get clusterrolebindings/cluster-admins --output-version=v1 --template='{{.subjects}}'"            'cascaded-group'
+os::cmd::expect_success_and_not_text "oc get clusterrolebindings/cluster-admins clusterrolebindings/cluster-admin --output-version=v1 -o jsonpath='{ .items[*].subjects }'" 'cascaded-group'
 os::cmd::expect_success_and_not_text "oc get rolebindings/cluster-admin         --output-version=v1 --template='{{.subjects}}' -n default" 'cascaded-group'
 os::cmd::expect_success_and_not_text "oc get scc/restricted                     --output-version=v1 --template='{{.groups}}'"              'cascaded-group'
 echo "user-group-cascade: ok"
@@ -476,6 +477,7 @@ os::cmd::expect_success_and_text 'oc create serviceaccount my-sa-name' 'servicea
 os::cmd::expect_success 'oc get sa my-sa-name'
 
 # extract token and ensure it links us back to the service account
+os::cmd::try_until_success 'oc sa get-token my-sa-name'
 os::cmd::expect_success_and_text 'oc get user/~ --token="$( oc sa get-token my-sa-name )"' 'system:serviceaccount:.+:my-sa-name'
 
 # add a new token and ensure it links us back to the service account

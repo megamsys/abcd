@@ -6,13 +6,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/errors"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/errors"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
 	"github.com/openshift/origin/pkg/cmd/templates"
@@ -55,16 +55,19 @@ type BuildSecretOptions struct {
 	Builder *resource.Builder
 	Infos   []*resource.Info
 
-	Encoder       runtime.Encoder
-	OutputVersion unversioned.GroupVersion
+	Encoder runtime.Encoder
 
 	Filenames []string
 	Selector  string
 	All       bool
 
+	Cmd *cobra.Command
+
 	ShortOutput bool
 	Local       bool
 	Mapper      meta.RESTMapper
+
+	Output string
 
 	PrintObject func([]*resource.Info) error
 
@@ -112,7 +115,7 @@ func NewCmdBuildSecret(fullName string, f *clientcmd.Factory, out, errOut io.Wri
 	cmd.Flags().BoolVar(&options.Local, "local", false, "If true, set build-secret will NOT contact api-server but run locally.")
 
 	cmd.MarkFlagFilename("filename", "yaml", "yml", "json")
-
+	kcmdutil.AddDryRunFlag(cmd)
 	return cmd
 }
 
@@ -161,14 +164,8 @@ func (o *BuildSecretOptions) Complete(f *clientcmd.Factory, cmd *cobra.Command, 
 	if err != nil {
 		return err
 	}
-	clientConfig, err := f.ClientConfig()
-	if err != nil {
-		return err
-	}
-	o.OutputVersion, err = kcmdutil.OutputVersion(cmd, clientConfig.GroupVersion)
-	if err != nil {
-		return err
-	}
+
+	o.Cmd = cmd
 
 	mapper, typer := f.Object()
 	if len(secretArg) > 0 {
@@ -194,11 +191,9 @@ func (o *BuildSecretOptions) Complete(f *clientcmd.Factory, cmd *cobra.Command, 
 		}
 	}
 
-	output := kcmdutil.GetFlagString(cmd, "output")
-	if len(output) > 0 || o.Local {
-		o.PrintObject = func(infos []*resource.Info) error {
-			return f.PrintResourceInfos(cmd, infos, o.Out)
-		}
+	o.Output = kcmdutil.GetFlagString(cmd, "output")
+	o.PrintObject = func(infos []*resource.Info) error {
+		return f.PrintResourceInfos(cmd, infos, o.Out)
 	}
 
 	o.Encoder = f.JSONEncoder()
@@ -240,7 +235,7 @@ func (o *BuildSecretOptions) Run() error {
 		return fmt.Errorf("cannot set a build secret on %s/%s", infos[0].Mapping.Resource, infos[0].Name)
 	}
 
-	if o.PrintObject != nil {
+	if len(o.Output) > 0 || o.Local || kcmdutil.GetDryRunFlag(o.Cmd) {
 		return o.PrintObject(infos)
 	}
 
@@ -257,7 +252,7 @@ func (o *BuildSecretOptions) Run() error {
 			continue
 		}
 
-		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, kapi.StrategicMergePatchType, patch.Patch)
+		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, types.StrategicMergePatchType, patch.Patch)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s/%s %v", info.Mapping.Resource, info.Name, err))
 			continue

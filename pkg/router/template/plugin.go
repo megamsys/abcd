@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/watch"
 	kapi "k8s.io/kubernetes/pkg/api"
-	ktypes "k8s.io/kubernetes/pkg/types"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/watch"
 
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	unidlingapi "github.com/openshift/origin/pkg/unidling/api"
@@ -37,22 +37,23 @@ func newDefaultTemplatePlugin(router routerInterface, includeUDP bool, lookupSvc
 }
 
 type TemplatePluginConfig struct {
-	WorkingDir             string
-	TemplatePath           string
-	ReloadScriptPath       string
-	ReloadInterval         time.Duration
-	ReloadCallbacks        []func()
-	DefaultCertificate     string
-	DefaultCertificatePath string
-	DefaultCertificateDir  string
-	StatsPort              int
-	StatsUsername          string
-	StatsPassword          string
-	IncludeUDP             bool
-	AllowWildcardRoutes    bool
-	PeerService            *ktypes.NamespacedName
-	BindPortsAfterSync     bool
-	MaxConnections         string
+	WorkingDir               string
+	TemplatePath             string
+	ReloadScriptPath         string
+	ReloadInterval           time.Duration
+	ReloadCallbacks          []func()
+	DefaultCertificate       string
+	DefaultCertificatePath   string
+	DefaultCertificateDir    string
+	DefaultDestinationCAPath string
+	StatsPort                int
+	StatsUsername            string
+	StatsPassword            string
+	IncludeUDP               bool
+	AllowWildcardRoutes      bool
+	PeerService              *ktypes.NamespacedName
+	BindPortsAfterSync       bool
+	MaxConnections           string
 }
 
 // routerInterface controls the interaction of the plugin with the underlying router implementation
@@ -100,11 +101,12 @@ func env(name, defaultValue string) string {
 func NewTemplatePlugin(cfg TemplatePluginConfig, lookupSvc ServiceLookup) (*TemplatePlugin, error) {
 	templateBaseName := filepath.Base(cfg.TemplatePath)
 	globalFuncs := template.FuncMap{
-		"endpointsForAlias": endpointsForAlias, //returns the list of valid endpoints
-		"env":               env,               //tries to get an environment variable if it can't return a default
-		"matchPattern":      matchPattern,      //anchors provided regular expression and evaluates against given string
-		"isInteger":         isInteger,         //determines if a given variable is an integer
-		"matchValues":       matchValues,       //compares a given string to a list of allowed strings
+		"endpointsForAlias":        endpointsForAlias,        //returns the list of valid endpoints
+		"processEndpointsForAlias": processEndpointsForAlias, //returns the list of valid endpoints after processing them
+		"env":          env,          //tries to get an environment variable if it can't return a default
+		"matchPattern": matchPattern, //anchors provided regular expression and evaluates against given string
+		"isInteger":    isInteger,    //determines if a given variable is an integer
+		"matchValues":  matchValues,  //compares a given string to a list of allowed strings
 
 		"genSubdomainWildcardRegexp": genSubdomainWildcardRegexp, //generates a regular expression matching the subdomain for hosts (and paths) with a wildcard policy
 		"generateRouteRegexp":        generateRouteRegexp,        //generates a regular expression matching the route hosts (and paths)
@@ -130,20 +132,21 @@ func NewTemplatePlugin(cfg TemplatePluginConfig, lookupSvc ServiceLookup) (*Temp
 	}
 
 	templateRouterCfg := templateRouterCfg{
-		dir:                    cfg.WorkingDir,
-		templates:              templates,
-		reloadScriptPath:       cfg.ReloadScriptPath,
-		reloadInterval:         cfg.ReloadInterval,
-		reloadCallbacks:        cfg.ReloadCallbacks,
-		defaultCertificate:     cfg.DefaultCertificate,
-		defaultCertificatePath: cfg.DefaultCertificatePath,
-		defaultCertificateDir:  cfg.DefaultCertificateDir,
-		statsUser:              cfg.StatsUsername,
-		statsPassword:          cfg.StatsPassword,
-		statsPort:              cfg.StatsPort,
-		allowWildcardRoutes:    cfg.AllowWildcardRoutes,
-		peerEndpointsKey:       peerKey,
-		bindPortsAfterSync:     cfg.BindPortsAfterSync,
+		dir:                      cfg.WorkingDir,
+		templates:                templates,
+		reloadScriptPath:         cfg.ReloadScriptPath,
+		reloadInterval:           cfg.ReloadInterval,
+		reloadCallbacks:          cfg.ReloadCallbacks,
+		defaultCertificate:       cfg.DefaultCertificate,
+		defaultCertificatePath:   cfg.DefaultCertificatePath,
+		defaultCertificateDir:    cfg.DefaultCertificateDir,
+		defaultDestinationCAPath: cfg.DefaultDestinationCAPath,
+		statsUser:                cfg.StatsUsername,
+		statsPassword:            cfg.StatsPassword,
+		statsPort:                cfg.StatsPort,
+		allowWildcardRoutes:      cfg.AllowWildcardRoutes,
+		peerEndpointsKey:         peerKey,
+		bindPortsAfterSync:       cfg.BindPortsAfterSync,
 	}
 	router, err := newTemplateRouter(templateRouterCfg)
 	return newDefaultTemplatePlugin(router, cfg.IncludeUDP, lookupSvc), err

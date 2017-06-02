@@ -6,16 +6,15 @@ import (
 
 	"github.com/golang/glog"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/cache"
 	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/util/workqueue"
-	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/openshift/origin/pkg/cmd/server/crypto"
 	"github.com/openshift/origin/pkg/cmd/server/crypto/extensions"
@@ -29,13 +28,11 @@ type ServiceServingCertUpdateController struct {
 	// Services that need to be checked
 	queue workqueue.RateLimitingInterface
 
-	serviceCache      cache.Store
-	serviceController *cache.Controller
-	serviceHasSynced  informerSynced
+	serviceCache     cache.Store
+	serviceHasSynced cache.InformerSynced
 
-	secretCache      cache.Store
-	secretController *cache.Controller
-	secretHasSynced  informerSynced
+	secretCache     cache.Store
+	secretHasSynced cache.InformerSynced
 
 	ca         *crypto.CA
 	publicCert string
@@ -49,7 +46,7 @@ type ServiceServingCertUpdateController struct {
 
 // NewServiceServingCertUpdateController creates a new ServiceServingCertUpdateController.
 // TODO this should accept a shared informer
-func NewServiceServingCertUpdateController(serviceClient kcoreclient.ServicesGetter, secretClient kcoreclient.SecretsGetter, ca *crypto.CA, dnsSuffix string, resyncInterval time.Duration) *ServiceServingCertUpdateController {
+func NewServiceServingCertUpdateController(services informers.ServiceInformer, secrets informers.SecretInformer, secretClient kcoreclient.SecretsGetter, ca *crypto.CA, dnsSuffix string, resyncInterval time.Duration) *ServiceServingCertUpdateController {
 	sc := &ServiceServingCertUpdateController{
 		secretClient: secretClient,
 
@@ -61,38 +58,22 @@ func NewServiceServingCertUpdateController(serviceClient kcoreclient.ServicesGet
 		minTimeLeftForCert: 1 * time.Hour,
 	}
 
-	sc.serviceCache, sc.serviceController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
-				return serviceClient.Services(kapi.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
-				return serviceClient.Services(kapi.NamespaceAll).Watch(options)
-			},
-		},
-		&kapi.Service{},
-		resyncInterval,
+	sc.serviceCache = services.Informer().GetStore()
+	services.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{},
-	)
-	sc.serviceHasSynced = sc.serviceController.HasSynced
-
-	sc.secretCache, sc.secretController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
-				return sc.secretClient.Secrets(kapi.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
-				return sc.secretClient.Secrets(kapi.NamespaceAll).Watch(options)
-			},
-		},
-		&kapi.Secret{},
 		resyncInterval,
+	)
+	sc.serviceHasSynced = services.Informer().GetController().HasSynced
+
+	sc.secretCache = secrets.Informer().GetIndexer()
+	secrets.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    sc.addSecret,
 			UpdateFunc: sc.updateSecret,
 		},
+		resyncInterval,
 	)
-	sc.secretHasSynced = sc.secretController.HasSynced
+	sc.secretHasSynced = secrets.Informer().GetController().HasSynced
 
 	sc.syncHandler = sc.syncSecret
 
@@ -102,50 +83,19 @@ func NewServiceServingCertUpdateController(serviceClient kcoreclient.ServicesGet
 // Run begins watching and syncing.
 func (sc *ServiceServingCertUpdateController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
-	defer glog.Infof("Shutting down service signing cert update controller")
 	defer sc.queue.ShutDown()
 
-	glog.Infof("starting service signing cert update controller")
-	go sc.serviceController.Run(stopCh)
-	go sc.secretController.Run(stopCh)
-
-	if !waitForCacheSync(stopCh, sc.serviceHasSynced, sc.secretHasSynced) {
+	// Wait for the stores to fill
+	if !cache.WaitForCacheSync(stopCh, sc.serviceHasSynced, sc.secretHasSynced) {
 		return
 	}
 
+	glog.V(5).Infof("Starting workers")
 	for i := 0; i < workers; i++ {
 		go wait.Until(sc.runWorker, time.Second, stopCh)
 	}
-
 	<-stopCh
-}
-
-// TODO this is all in the kube library after the 1.5 rebase
-
-// informerSynced is a function that can be used to determine if an informer has synced.  This is useful for determining if caches have synced.
-type informerSynced func() bool
-
-// syncedPollPeriod controls how often you look at the status of your sync funcs
-const syncedPollPeriod = 100 * time.Millisecond
-
-func waitForCacheSync(stopCh <-chan struct{}, cacheSyncs ...informerSynced) bool {
-	err := wait.PollUntil(syncedPollPeriod,
-		func() (bool, error) {
-			for _, syncFunc := range cacheSyncs {
-				if !syncFunc() {
-					return false, nil
-				}
-			}
-			return true, nil
-		},
-		stopCh)
-	if err != nil {
-		glog.V(2).Infof("stop requested")
-		return false
-	}
-
-	glog.V(4).Infof("caches populated")
-	return true
+	glog.V(1).Infof("Shutting down")
 }
 
 func (sc *ServiceServingCertUpdateController) enqueueSecret(obj interface{}) {
