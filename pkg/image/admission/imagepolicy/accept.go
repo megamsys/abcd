@@ -5,14 +5,13 @@ import (
 
 	"github.com/golang/glog"
 
-	"k8s.io/kubernetes/pkg/admission"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/admission"
 	kapi "k8s.io/kubernetes/pkg/api"
-	apierrs "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 
 	"github.com/openshift/origin/pkg/api/meta"
-	imagepolicyapi "github.com/openshift/origin/pkg/image/admission/imagepolicy/api"
 	"github.com/openshift/origin/pkg/image/admission/imagepolicy/rules"
 	imageapi "github.com/openshift/origin/pkg/image/api"
 )
@@ -27,7 +26,7 @@ type policyDecision struct {
 	err    error
 }
 
-func accept(accepter rules.Accepter, imageResolutionType imagepolicyapi.ImageResolutionType, resolver imageResolver, m meta.ImageReferenceMutator, attr admission.Attributes, excludedRules sets.String) error {
+func accept(accepter rules.Accepter, policy imageResolutionPolicy, resolver imageResolver, m meta.ImageReferenceMutator, attr admission.Attributes, excludedRules sets.String) error {
 	decisions := policyDecisions{}
 
 	gr := attr.GetResource().GroupResource()
@@ -37,11 +36,11 @@ func accept(accepter rules.Accepter, imageResolutionType imagepolicyapi.ImageRes
 		// before
 		decision, ok := decisions[*ref]
 		if !ok {
-			if imagepolicyapi.RequestsResolution(imageResolutionType) {
+			if policy.RequestsResolution(gr) {
 				resolvedAttrs, err := resolver.ResolveObjectReference(ref, attr.GetNamespace())
 
 				switch {
-				case err != nil && imagepolicyapi.FailOnResolutionFailure(imageResolutionType):
+				case err != nil && policy.FailOnResolutionFailure(gr):
 					// if we had a resolution error and we're supposed to fail, fail
 					decision.err = err
 					decision.tested = true
@@ -57,7 +56,7 @@ func accept(accepter rules.Accepter, imageResolutionType imagepolicyapi.ImageRes
 					// if we resolved properly, assign the attributes and rewrite the pull spec if we need to
 					decision.attrs = resolvedAttrs
 
-					if imagepolicyapi.RewriteImagePullSpec(imageResolutionType) {
+					if policy.RewriteImagePullSpec(resolvedAttrs, gr) {
 						ref.Namespace = ""
 						ref.Name = decision.attrs.Name.Exact()
 						ref.Kind = "DockerImage"

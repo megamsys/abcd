@@ -8,14 +8,15 @@ import (
 
 	"github.com/google/gofuzz"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/diff"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/serializer"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/diff"
 
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
 	configapiv1 "github.com/openshift/origin/pkg/cmd/server/api/v1"
@@ -27,7 +28,7 @@ import (
 	_ "github.com/openshift/origin/pkg/cmd/server/api/install"
 )
 
-func fuzzInternalObject(t *testing.T, forVersion unversioned.GroupVersion, item runtime.Object, seed int64) runtime.Object {
+func fuzzInternalObject(t *testing.T, forVersion schema.GroupVersion, item runtime.Object, seed int64) runtime.Object {
 	f := fuzzerFor(t, forVersion, rand.NewSource(seed))
 	f.Funcs(
 		// these follow defaulting rules
@@ -41,6 +42,14 @@ func fuzzInternalObject(t *testing.T, forVersion unversioned.GroupVersion, item 
 			}
 			if len(obj.Controllers) == 0 {
 				obj.Controllers = configapi.ControllersAll
+			}
+			if election := obj.ControllerConfig.Election; election != nil {
+				if len(election.LockNamespace) == 0 {
+					election.LockNamespace = "kube-system"
+				}
+				if len(election.LockResource.Group) == 0 && len(election.LockResource.Resource) == 0 {
+					election.LockResource.Resource = "endpoints"
+				}
 			}
 			if obj.ServingInfo.RequestTimeoutSeconds == 0 {
 				obj.ServingInfo.RequestTimeoutSeconds = 60 * 60
@@ -244,6 +253,12 @@ func fuzzInternalObject(t *testing.T, forVersion unversioned.GroupVersion, item 
 			if len(obj.ExecHandlerName) == 0 {
 				obj.ExecHandlerName = configapi.DockerExecHandlerNative
 			}
+			if len(obj.DockerShimSocket) == 0 {
+				obj.DockerShimSocket = "/var/run/sockershim.sock"
+			}
+			if len(obj.DockershimRootDirectory) == 0 {
+				obj.DockershimRootDirectory = "/var/lib/dockershim"
+			}
 		},
 		func(obj *configapi.ServingInfo, c fuzz.Continue) {
 			c.FuzzNoCustom(obj)
@@ -311,9 +326,18 @@ func fuzzInternalObject(t *testing.T, forVersion unversioned.GroupVersion, item 
 		},
 		func(obj *imagepolicyapi.ImagePolicyConfig, c fuzz.Continue) {
 			c.FuzzNoCustom(obj)
+			if obj.ResolutionRules == nil {
+				obj.ResolutionRules = []imagepolicyapi.ImageResolutionPolicyRule{
+					{TargetResource: metav1.GroupResource{Resource: "pods"}, LocalNames: true},
+					{TargetResource: metav1.GroupResource{Group: "build.openshift.io", Resource: "builds"}, LocalNames: true},
+					{TargetResource: metav1.GroupResource{Resource: "replicationcontrollers"}, LocalNames: true},
+					{TargetResource: metav1.GroupResource{Group: "extensions", Resource: "replicasets"}, LocalNames: true},
+					{TargetResource: metav1.GroupResource{Group: "batch", Resource: "jobs"}, LocalNames: true},
+				}
+			}
 			for i := range obj.ExecutionRules {
 				if len(obj.ExecutionRules[i].OnResources) == 0 {
-					obj.ExecutionRules[i].OnResources = []unversioned.GroupResource{{Resource: "pods"}}
+					obj.ExecutionRules[i].OnResources = []schema.GroupResource{{Resource: "pods"}}
 				}
 				obj.ExecutionRules[i].MatchImageLabelSelectors = nil
 			}
@@ -438,7 +462,7 @@ func TestSpecificRoundTrips(t *testing.T) {
 	testCases := []struct {
 		mediaType string
 		in, out   runtime.Object
-		to, from  unversioned.GroupVersion
+		to, from  schema.GroupVersion
 	}{
 		{
 			in: &configapi.MasterConfig{
@@ -453,7 +477,7 @@ func TestSpecificRoundTrips(t *testing.T) {
 			},
 			to: configapiv1.SchemeGroupVersion,
 			out: &configapiv1.MasterConfig{
-				TypeMeta: unversioned.TypeMeta{Kind: "MasterConfig", APIVersion: "v1"},
+				TypeMeta: metav1.TypeMeta{Kind: "MasterConfig", APIVersion: "v1"},
 				AdmissionConfig: configapiv1.AdmissionConfig{
 					PluginConfig: map[string]configapiv1.AdmissionPluginConfig{
 						"test1": {Configuration: runtime.RawExtension{
@@ -504,7 +528,7 @@ func TestSpecificRoundTrips(t *testing.T) {
 	}
 }
 
-func fuzzerFor(t *testing.T, version unversioned.GroupVersion, src rand.Source) *fuzz.Fuzzer {
+func fuzzerFor(t *testing.T, version schema.GroupVersion, src rand.Source) *fuzz.Fuzzer {
 	f := fuzz.New().NilChance(.5).NumElements(1, 1)
 	if src != nil {
 		f.RandSource(src)
@@ -526,13 +550,13 @@ func fuzzerFor(t *testing.T, version unversioned.GroupVersion, src rand.Source) 
 				Raw:         []byte(`{"apiVersion":"unknown.group/unknown","kind":"Something","someKey":"someValue"}`),
 			}
 		},
-		func(j *unversioned.TypeMeta, c fuzz.Continue) {
+		func(j *metav1.TypeMeta, c fuzz.Continue) {
 			// We have to customize the randomization of TypeMetas because their
 			// APIVersion and Kind must remain blank in memory.
 			j.APIVersion = ""
 			j.Kind = ""
 		},
-		func(j *kapi.ObjectMeta, c fuzz.Continue) {
+		func(j *metav1.ObjectMeta, c fuzz.Continue) {
 			j.Name = c.RandString()
 			j.ResourceVersion = strconv.FormatUint(c.RandUint64(), 10)
 			j.SelfLink = c.RandString()
@@ -542,7 +566,7 @@ func fuzzerFor(t *testing.T, version unversioned.GroupVersion, src rand.Source) 
 			var sec, nsec int64
 			c.Fuzz(&sec)
 			c.Fuzz(&nsec)
-			j.CreationTimestamp = unversioned.Unix(sec, nsec).Rfc3339Copy()
+			j.CreationTimestamp = metav1.Unix(sec, nsec).Rfc3339Copy()
 		},
 		func(j *kapi.ObjectReference, c fuzz.Continue) {
 			// We have to customize the randomization of TypeMetas because their

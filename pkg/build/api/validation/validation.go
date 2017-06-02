@@ -10,13 +10,13 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/openshift/origin/pkg/util/labelselector"
+	kpath "k8s.io/apimachinery/pkg/api/validation/path"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	kvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	kapi "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/validation"
-	kpath "k8s.io/kubernetes/pkg/api/validation/path"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/strategicpatch"
-	kvalidation "k8s.io/kubernetes/pkg/util/validation"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
 	"github.com/openshift/origin/pkg/build/api/v1"
@@ -146,6 +146,14 @@ func ValidateBuildConfig(config *buildapi.BuildConfig) field.ErrorList {
 	default:
 		allErrs = append(allErrs, field.Invalid(specPath.Child("runPolicy"), config.Spec.RunPolicy,
 			"run policy must Parallel, Serial, or SerialLatestOnly"))
+	}
+
+	if config.Spec.SuccessfulBuildsHistoryLimit != nil {
+		allErrs = append(allErrs, validation.ValidateNonnegativeField(int64(*config.Spec.SuccessfulBuildsHistoryLimit), specPath.Child("successfulBuildsHistoryLimit"))...)
+	}
+
+	if config.Spec.FailedBuildsHistoryLimit != nil {
+		allErrs = append(allErrs, validation.ValidateNonnegativeField(int64(*config.Spec.FailedBuildsHistoryLimit), specPath.Child("failedBuildsHistoryLimit"))...)
 	}
 
 	allErrs = append(allErrs, validateCommonSpec(&config.Spec.CommonSpec, specPath)...)

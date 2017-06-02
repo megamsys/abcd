@@ -1,16 +1,16 @@
 package v1
 
 import (
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type ExtendedArguments map[string][]string
 
 // NodeConfig is the fully specified config starting an OpenShift node
 type NodeConfig struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// NodeName is the value used to identify this particular node in the cluster.  If possible, this should be your fully qualified hostname.
 	// If you're describing a set of static nodes to the master, this value must match one of the values in the list
@@ -52,6 +52,11 @@ type NodeConfig struct {
 	// the nameservers listed in /etc/resolv.conf. If you have configured dnsmasq or another DNS proxy on the
 	// system, this value should be set to the upstream nameservers dnsmasq resolves with.
 	DNSNameservers []string `json:"dnsNameservers"`
+
+	// DNSRecursiveResolvConf is a path to a resolv.conf file that contains settings for an upstream server.
+	// Only the nameservers and port fields are used. The file must exist and parse correctly. It adds extra
+	// nameservers to DNSNameservers if set.
+	DNSRecursiveResolvConf string `json:"dnsRecursiveResolvConf"`
 
 	// Deprecated and maintained for backward compatibility, use NetworkConfig.NetworkPluginName instead
 	DeprecatedNetworkPluginName string `json:"networkPluginName,omitempty"`
@@ -148,6 +153,10 @@ type DockerConfig struct {
 	// ExecHandlerName is the name of the handler to use for executing
 	// commands in Docker containers.
 	ExecHandlerName DockerExecHandlerType `json:"execHandlerName"`
+	// DockerShimSocket is the location of the dockershim socket the kubelet uses.
+	DockerShimSocket string `json:"dockerShimSocket"`
+	// DockershimRootDirectory is the dockershim root directory.
+	DockershimRootDirectory string `json:"dockerShimRootDirectory"`
 }
 
 type DockerExecHandlerType string
@@ -169,7 +178,7 @@ type FeatureList []string
 
 // MasterConfig holds the necessary configuration options for the OpenShift master
 type MasterConfig struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// ServingInfo describes how to start serving
 	ServingInfo HTTPServingInfo `json:"servingInfo"`
@@ -177,6 +186,9 @@ type MasterConfig struct {
 	// AuthConfig configures authentication options in addition to the standard
 	// oauth token and client certificate authenticators
 	AuthConfig MasterAuthConfig `json:"authConfig"`
+
+	// AggregatorConfig has options for configuring the aggregator component of the API server.
+	AggregatorConfig AggregatorConfig `json:"aggregatorConfig"`
 
 	// CORSAllowedOrigins
 	CORSAllowedOrigins []string `json:"corsAllowedOrigins"`
@@ -193,12 +205,17 @@ type MasterConfig struct {
 	// values are recognized at this time.
 	Controllers string `json:"controllers"`
 	// PauseControllers instructs the master to not automatically start controllers, but instead
-	// to wait until a notification to the server is received before launching them.
+	// to wait until a notification to the server is received before launching them. This field is
+	// ignored if controllerConfig.lockServiceName is specified.
+	// Deprecated: Will be removed in 3.7.
 	PauseControllers bool `json:"pauseControllers"`
-	// ControllerLeaseTTL enables controller election, instructing the master to attempt to acquire
-	// a lease before controllers start and renewing it within a number of seconds defined by this value.
-	// Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or
-	// omitted) and controller election can be disabled with -1.
+	// ControllerLeaseTTL enables controller election against etcd, instructing the master to attempt to
+	// acquire a lease before controllers start and renewing it within a number of seconds defined by this
+	// value. Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or
+	// omitted) and controller election can be disabled with -1. This field is ignored if
+	// controllerConfig.lockServiceName is specified.
+	// Deprecated: use controllerConfig.lockServiceName to force leader election via config, and the
+	//   appropriate leader election flags in controllerArguments. Will be removed in 3.9.
 	ControllerLeaseTTL int `json:"controllerLeaseTTL"`
 
 	// AdmissionConfig contains admission control plugin configuration.
@@ -267,8 +284,10 @@ type MasterConfig struct {
 	// AuditConfig holds information related to auditing capabilities.
 	AuditConfig AuditConfig `json:"auditConfig"`
 
-	// EnableTemplateServiceBroker is a temporary switch which enables TemplateServiceBroker.
-	EnableTemplateServiceBroker bool `json:"enableTemplateServiceBroker"`
+	// TemplateServiceBrokerConfig holds information related to the template
+	// service broker.  The broker is enabled if TemplateServiceBrokerConfig is
+	// non-nil.
+	TemplateServiceBrokerConfig *TemplateServiceBrokerConfig `json:"templateServiceBrokerConfig"`
 }
 
 // MasterAuthConfig configures authentication options in addition to the standard
@@ -292,6 +311,12 @@ type RequestHeaderAuthenticationOptions struct {
 	GroupHeaders []string `json:"groupHeaders"`
 	// ExtraHeaderPrefixes is the set of request header prefixes to inspect for user extra. X-Remote-Extra- is suggested.
 	ExtraHeaderPrefixes []string `json:"extraHeaderPrefixes"`
+}
+
+// AggregatorConfig holds information required to make the aggregator function.
+type AggregatorConfig struct {
+	// ProxyClientInfo specifies the client cert/key to use when proxying to aggregated API servers
+	ProxyClientInfo CertInfo `json:"proxyClientInfo"`
 }
 
 // AuditConfig holds configuration for the audit capabilities
@@ -769,7 +794,7 @@ type SessionConfig struct {
 
 // SessionSecrets list the secrets to use to sign/encrypt and authenticate/decrypt created sessions.
 type SessionSecrets struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Secrets is a list of secrets
 	// New sessions are signed and encrypted using the first secret.
@@ -801,7 +826,7 @@ type IdentityProvider struct {
 
 // BasicAuthPasswordIdentityProvider provides identities for users authenticating using HTTP basic auth credentials
 type BasicAuthPasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// RemoteConnectionInfo contains information about how to connect to the external basic auth server
 	RemoteConnectionInfo `json:",inline"`
@@ -809,17 +834,17 @@ type BasicAuthPasswordIdentityProvider struct {
 
 // AllowAllPasswordIdentityProvider provides identities for users authenticating using non-empty passwords
 type AllowAllPasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 }
 
 // DenyAllPasswordIdentityProvider provides no identities for users
 type DenyAllPasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 }
 
 // HTPasswdPasswordIdentityProvider provides identities for users authenticating using htpasswd credentials
 type HTPasswdPasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// File is a reference to your htpasswd file
 	File string `json:"file"`
@@ -827,7 +852,7 @@ type HTPasswdPasswordIdentityProvider struct {
 
 // LDAPPasswordIdentityProvider provides identities for users authenticating using LDAP credentials
 type LDAPPasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// URL is an RFC 2255 URL which specifies the LDAP search parameters to use. The syntax of the URL is
 	//    ldap://host:port/basedn?attribute?scope?filter
 	URL string `json:"url"`
@@ -866,7 +891,7 @@ type LDAPAttributeMapping struct {
 
 // KeystonePasswordIdentityProvider provides identities for users authenticating using keystone password credentials
 type KeystonePasswordIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// RemoteConnectionInfo contains information about how to connect to the keystone server
 	RemoteConnectionInfo `json:",inline"`
 	// Domain Name is required for keystone v3
@@ -875,7 +900,7 @@ type KeystonePasswordIdentityProvider struct {
 
 // RequestHeaderIdentityProvider provides identities for users authenticating using request header credentials
 type RequestHeaderIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// LoginURL is a URL to redirect unauthenticated /authorize requests to
 	// Unauthenticated requests from OAuth clients which expect interactive logins will be redirected here
@@ -910,7 +935,7 @@ type RequestHeaderIdentityProvider struct {
 
 // GitHubIdentityProvider provides identities for users authenticating using GitHub credentials
 type GitHubIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// ClientID is the oauth client ID
 	ClientID string `json:"clientID"`
@@ -924,7 +949,7 @@ type GitHubIdentityProvider struct {
 
 // GitLabIdentityProvider provides identities for users authenticating using GitLab credentials
 type GitLabIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// CA is the optional trusted certificate authority bundle to use when making requests to the server
 	// If empty, the default system roots are used
@@ -939,7 +964,7 @@ type GitLabIdentityProvider struct {
 
 // GoogleIdentityProvider provides identities for users authenticating using Google credentials
 type GoogleIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// ClientID is the oauth client ID
 	ClientID string `json:"clientID"`
@@ -952,7 +977,7 @@ type GoogleIdentityProvider struct {
 
 // OpenIDIdentityProvider provides identities for users authenticating using OpenID credentials
 type OpenIDIdentityProvider struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// CA is the optional trusted certificate authority bundle to use when making requests to the server
 	// If empty, the default system roots are used
@@ -1148,7 +1173,7 @@ type StringSourceSpec struct {
 
 // LDAPSyncConfig holds the necessary configuration options to define an LDAP group sync
 type LDAPSyncConfig struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Host is the scheme, host and port of the LDAP server to connect to:
 	// scheme://host:port
 	URL string `json:"url"`
@@ -1323,9 +1348,35 @@ type AdmissionConfig struct {
 
 // ControllerConfig holds configuration values for controllers
 type ControllerConfig struct {
+	// Election defines the configuration for electing a controller instance to make changes to
+	// the cluster. If unspecified, the ControllerTTL value is checked to determine whether the
+	// legacy direct etcd election code will be used.
+	Election *ControllerElectionConfig `json:"election"`
 	// ServiceServingCert holds configuration for service serving cert signer which creates cert/key pairs for
 	// pods fulfilling a service to serve with.
 	ServiceServingCert ServiceServingCert `json:"serviceServingCert"`
+}
+
+// ControllerElectionConfig contains configuration values for deciding how a controller
+// will be elected to act as leader.
+type ControllerElectionConfig struct {
+	// LockName is the resource name used to act as the lock for determining which controller
+	// instance should lead.
+	LockName string `json:"lockName"`
+	// LockNamespace is the resource namespace used to act as the lock for determining which
+	// controller instance should lead. It defaults to "kube-system"
+	LockNamespace string `json:"lockNamespace"`
+	// LockResource is the group and resource name to use to coordinate for the controller lock.
+	// If unset, defaults to "endpoints".
+	LockResource GroupResource `json:"lockResource"`
+}
+
+// GroupResource points to a resource by its name and API group.
+type GroupResource struct {
+	// Group is the name of an API group
+	Group string `json:"group"`
+	// Resource is the name of a resource.
+	Resource string `json:"resource"`
 }
 
 // ServiceServingCert holds configuration for service serving cert signer which creates cert/key pairs for
@@ -1340,8 +1391,16 @@ type ServiceServingCert struct {
 // When this type is present as the `configuration` object under `pluginConfig` and *if* the admission plugin supports it,
 // this will cause an "off by default" admission plugin to be enabled
 type DefaultAdmissionConfig struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
 	// Disable turns off an admission plugin that is enabled by default.
 	Disable bool `json:"disable"`
+}
+
+// TemplateServiceBrokerConfig holds information related to the template
+// service broker
+type TemplateServiceBrokerConfig struct {
+	// TemplateNamespaces indicates the namespace(s) in which the template service
+	// broker looks for templates to serve to the catalog.
+	TemplateNamespaces []string `json:"templateNamespaces"`
 }

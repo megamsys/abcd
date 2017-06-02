@@ -5,10 +5,10 @@
 package v1
 
 import (
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	conversion "k8s.io/apimachinery/pkg/conversion"
+	runtime "k8s.io/apimachinery/pkg/runtime"
 	api_v1 "k8s.io/kubernetes/pkg/api/v1"
-	conversion "k8s.io/kubernetes/pkg/conversion"
-	runtime "k8s.io/kubernetes/pkg/runtime"
 	reflect "reflect"
 )
 
@@ -26,6 +26,7 @@ func RegisterDeepCopies(scheme *runtime.Scheme) error {
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageImportStatus, InType: reflect.TypeOf(&ImageImportStatus{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageLayer, InType: reflect.TypeOf(&ImageLayer{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageList, InType: reflect.TypeOf(&ImageList{})},
+		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageLookupPolicy, InType: reflect.TypeOf(&ImageLookupPolicy{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageSignature, InType: reflect.TypeOf(&ImageSignature{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageStream, InType: reflect.TypeOf(&ImageStream{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1_ImageStreamImage, InType: reflect.TypeOf(&ImageStreamImage{})},
@@ -57,11 +58,7 @@ func DeepCopy_v1_DockerImageReference(in interface{}, out interface{}, c *conver
 	{
 		in := in.(*DockerImageReference)
 		out := out.(*DockerImageReference)
-		out.Registry = in.Registry
-		out.Namespace = in.Namespace
-		out.Name = in.Name
-		out.Tag = in.Tag
-		out.ID = in.ID
+		*out = *in
 		return nil
 	}
 }
@@ -70,24 +67,21 @@ func DeepCopy_v1_Image(in interface{}, out interface{}, c *conversion.Cloner) er
 	{
 		in := in.(*Image)
 		out := out.(*Image)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
-		out.DockerImageReference = in.DockerImageReference
-		if err := runtime.DeepCopy_runtime_RawExtension(&in.DockerImageMetadata, &out.DockerImageMetadata, c); err != nil {
+		if newVal, err := c.DeepCopy(&in.DockerImageMetadata); err != nil {
 			return err
+		} else {
+			out.DockerImageMetadata = *newVal.(*runtime.RawExtension)
 		}
-		out.DockerImageMetadataVersion = in.DockerImageMetadataVersion
-		out.DockerImageManifest = in.DockerImageManifest
 		if in.DockerImageLayers != nil {
 			in, out := &in.DockerImageLayers, &out.DockerImageLayers
 			*out = make([]ImageLayer, len(*in))
-			for i := range *in {
-				(*out)[i] = (*in)[i]
-			}
-		} else {
-			out.DockerImageLayers = nil
+			copy(*out, *in)
 		}
 		if in.Signatures != nil {
 			in, out := &in.Signatures, &out.Signatures
@@ -97,24 +91,18 @@ func DeepCopy_v1_Image(in interface{}, out interface{}, c *conversion.Cloner) er
 					return err
 				}
 			}
-		} else {
-			out.Signatures = nil
 		}
 		if in.DockerImageSignatures != nil {
 			in, out := &in.DockerImageSignatures, &out.DockerImageSignatures
 			*out = make([][]byte, len(*in))
 			for i := range *in {
-				if newVal, err := c.DeepCopy(&(*in)[i]); err != nil {
-					return err
-				} else {
-					(*out)[i] = *newVal.(*[]byte)
+				if (*in)[i] != nil {
+					in, out := &(*in)[i], &(*out)[i]
+					*out = make([]byte, len(*in))
+					copy(*out, *in)
 				}
 			}
-		} else {
-			out.DockerImageSignatures = nil
 		}
-		out.DockerImageManifestMediaType = in.DockerImageManifestMediaType
-		out.DockerImageConfig = in.DockerImageConfig
 		return nil
 	}
 }
@@ -123,17 +111,12 @@ func DeepCopy_v1_ImageImportSpec(in interface{}, out interface{}, c *conversion.
 	{
 		in := in.(*ImageImportSpec)
 		out := out.(*ImageImportSpec)
-		out.From = in.From
+		*out = *in
 		if in.To != nil {
 			in, out := &in.To, &out.To
 			*out = new(api_v1.LocalObjectReference)
 			**out = **in
-		} else {
-			out.To = nil
 		}
-		out.ImportPolicy = in.ImportPolicy
-		out.ReferencePolicy = in.ReferencePolicy
-		out.IncludeManifest = in.IncludeManifest
 		return nil
 	}
 }
@@ -142,8 +125,11 @@ func DeepCopy_v1_ImageImportStatus(in interface{}, out interface{}, c *conversio
 	{
 		in := in.(*ImageImportStatus)
 		out := out.(*ImageImportStatus)
-		if err := unversioned.DeepCopy_unversioned_Status(&in.Status, &out.Status, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.Status); err != nil {
 			return err
+		} else {
+			out.Status = *newVal.(*meta_v1.Status)
 		}
 		if in.Image != nil {
 			in, out := &in.Image, &out.Image
@@ -151,10 +137,7 @@ func DeepCopy_v1_ImageImportStatus(in interface{}, out interface{}, c *conversio
 			if err := DeepCopy_v1_Image(*in, *out, c); err != nil {
 				return err
 			}
-		} else {
-			out.Image = nil
 		}
-		out.Tag = in.Tag
 		return nil
 	}
 }
@@ -163,9 +146,7 @@ func DeepCopy_v1_ImageLayer(in interface{}, out interface{}, c *conversion.Clone
 	{
 		in := in.(*ImageLayer)
 		out := out.(*ImageLayer)
-		out.Name = in.Name
-		out.LayerSize = in.LayerSize
-		out.MediaType = in.MediaType
+		*out = *in
 		return nil
 	}
 }
@@ -174,8 +155,7 @@ func DeepCopy_v1_ImageList(in interface{}, out interface{}, c *conversion.Cloner
 	{
 		in := in.(*ImageList)
 		out := out.(*ImageList)
-		out.TypeMeta = in.TypeMeta
-		out.ListMeta = in.ListMeta
+		*out = *in
 		if in.Items != nil {
 			in, out := &in.Items, &out.Items
 			*out = make([]Image, len(*in))
@@ -184,9 +164,16 @@ func DeepCopy_v1_ImageList(in interface{}, out interface{}, c *conversion.Cloner
 					return err
 				}
 			}
-		} else {
-			out.Items = nil
 		}
+		return nil
+	}
+}
+
+func DeepCopy_v1_ImageLookupPolicy(in interface{}, out interface{}, c *conversion.Cloner) error {
+	{
+		in := in.(*ImageLookupPolicy)
+		out := out.(*ImageLookupPolicy)
+		*out = *in
 		return nil
 	}
 }
@@ -195,17 +182,16 @@ func DeepCopy_v1_ImageSignature(in interface{}, out interface{}, c *conversion.C
 	{
 		in := in.(*ImageSignature)
 		out := out.(*ImageSignature)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
-		out.Type = in.Type
 		if in.Content != nil {
 			in, out := &in.Content, &out.Content
 			*out = make([]byte, len(*in))
 			copy(*out, *in)
-		} else {
-			out.Content = nil
 		}
 		if in.Conditions != nil {
 			in, out := &in.Conditions, &out.Conditions
@@ -215,39 +201,28 @@ func DeepCopy_v1_ImageSignature(in interface{}, out interface{}, c *conversion.C
 					return err
 				}
 			}
-		} else {
-			out.Conditions = nil
 		}
-		out.ImageIdentity = in.ImageIdentity
 		if in.SignedClaims != nil {
 			in, out := &in.SignedClaims, &out.SignedClaims
 			*out = make(map[string]string)
 			for key, val := range *in {
 				(*out)[key] = val
 			}
-		} else {
-			out.SignedClaims = nil
 		}
 		if in.Created != nil {
 			in, out := &in.Created, &out.Created
-			*out = new(unversioned.Time)
+			*out = new(meta_v1.Time)
 			**out = (*in).DeepCopy()
-		} else {
-			out.Created = nil
 		}
 		if in.IssuedBy != nil {
 			in, out := &in.IssuedBy, &out.IssuedBy
 			*out = new(SignatureIssuer)
 			**out = **in
-		} else {
-			out.IssuedBy = nil
 		}
 		if in.IssuedTo != nil {
 			in, out := &in.IssuedTo, &out.IssuedTo
 			*out = new(SignatureSubject)
 			**out = **in
-		} else {
-			out.IssuedTo = nil
 		}
 		return nil
 	}
@@ -257,9 +232,11 @@ func DeepCopy_v1_ImageStream(in interface{}, out interface{}, c *conversion.Clon
 	{
 		in := in.(*ImageStream)
 		out := out.(*ImageStream)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
 		if err := DeepCopy_v1_ImageStreamSpec(&in.Spec, &out.Spec, c); err != nil {
 			return err
@@ -275,9 +252,11 @@ func DeepCopy_v1_ImageStreamImage(in interface{}, out interface{}, c *conversion
 	{
 		in := in.(*ImageStreamImage)
 		out := out.(*ImageStreamImage)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
 		if err := DeepCopy_v1_Image(&in.Image, &out.Image, c); err != nil {
 			return err
@@ -290,9 +269,11 @@ func DeepCopy_v1_ImageStreamImport(in interface{}, out interface{}, c *conversio
 	{
 		in := in.(*ImageStreamImport)
 		out := out.(*ImageStreamImport)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
 		if err := DeepCopy_v1_ImageStreamImportSpec(&in.Spec, &out.Spec, c); err != nil {
 			return err
@@ -308,13 +289,11 @@ func DeepCopy_v1_ImageStreamImportSpec(in interface{}, out interface{}, c *conve
 	{
 		in := in.(*ImageStreamImportSpec)
 		out := out.(*ImageStreamImportSpec)
-		out.Import = in.Import
+		*out = *in
 		if in.Repository != nil {
 			in, out := &in.Repository, &out.Repository
 			*out = new(RepositoryImportSpec)
 			**out = **in
-		} else {
-			out.Repository = nil
 		}
 		if in.Images != nil {
 			in, out := &in.Images, &out.Images
@@ -324,8 +303,6 @@ func DeepCopy_v1_ImageStreamImportSpec(in interface{}, out interface{}, c *conve
 					return err
 				}
 			}
-		} else {
-			out.Images = nil
 		}
 		return nil
 	}
@@ -335,14 +312,13 @@ func DeepCopy_v1_ImageStreamImportStatus(in interface{}, out interface{}, c *con
 	{
 		in := in.(*ImageStreamImportStatus)
 		out := out.(*ImageStreamImportStatus)
+		*out = *in
 		if in.Import != nil {
 			in, out := &in.Import, &out.Import
 			*out = new(ImageStream)
 			if err := DeepCopy_v1_ImageStream(*in, *out, c); err != nil {
 				return err
 			}
-		} else {
-			out.Import = nil
 		}
 		if in.Repository != nil {
 			in, out := &in.Repository, &out.Repository
@@ -350,8 +326,6 @@ func DeepCopy_v1_ImageStreamImportStatus(in interface{}, out interface{}, c *con
 			if err := DeepCopy_v1_RepositoryImportStatus(*in, *out, c); err != nil {
 				return err
 			}
-		} else {
-			out.Repository = nil
 		}
 		if in.Images != nil {
 			in, out := &in.Images, &out.Images
@@ -361,8 +335,6 @@ func DeepCopy_v1_ImageStreamImportStatus(in interface{}, out interface{}, c *con
 					return err
 				}
 			}
-		} else {
-			out.Images = nil
 		}
 		return nil
 	}
@@ -372,8 +344,7 @@ func DeepCopy_v1_ImageStreamList(in interface{}, out interface{}, c *conversion.
 	{
 		in := in.(*ImageStreamList)
 		out := out.(*ImageStreamList)
-		out.TypeMeta = in.TypeMeta
-		out.ListMeta = in.ListMeta
+		*out = *in
 		if in.Items != nil {
 			in, out := &in.Items, &out.Items
 			*out = make([]ImageStream, len(*in))
@@ -382,8 +353,6 @@ func DeepCopy_v1_ImageStreamList(in interface{}, out interface{}, c *conversion.
 					return err
 				}
 			}
-		} else {
-			out.Items = nil
 		}
 		return nil
 	}
@@ -393,14 +362,15 @@ func DeepCopy_v1_ImageStreamMapping(in interface{}, out interface{}, c *conversi
 	{
 		in := in.(*ImageStreamMapping)
 		out := out.(*ImageStreamMapping)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
 		if err := DeepCopy_v1_Image(&in.Image, &out.Image, c); err != nil {
 			return err
 		}
-		out.Tag = in.Tag
 		return nil
 	}
 }
@@ -409,7 +379,7 @@ func DeepCopy_v1_ImageStreamSpec(in interface{}, out interface{}, c *conversion.
 	{
 		in := in.(*ImageStreamSpec)
 		out := out.(*ImageStreamSpec)
-		out.DockerImageRepository = in.DockerImageRepository
+		*out = *in
 		if in.Tags != nil {
 			in, out := &in.Tags, &out.Tags
 			*out = make([]TagReference, len(*in))
@@ -418,8 +388,6 @@ func DeepCopy_v1_ImageStreamSpec(in interface{}, out interface{}, c *conversion.
 					return err
 				}
 			}
-		} else {
-			out.Tags = nil
 		}
 		return nil
 	}
@@ -429,7 +397,7 @@ func DeepCopy_v1_ImageStreamStatus(in interface{}, out interface{}, c *conversio
 	{
 		in := in.(*ImageStreamStatus)
 		out := out.(*ImageStreamStatus)
-		out.DockerImageRepository = in.DockerImageRepository
+		*out = *in
 		if in.Tags != nil {
 			in, out := &in.Tags, &out.Tags
 			*out = make([]NamedTagEventList, len(*in))
@@ -438,8 +406,6 @@ func DeepCopy_v1_ImageStreamStatus(in interface{}, out interface{}, c *conversio
 					return err
 				}
 			}
-		} else {
-			out.Tags = nil
 		}
 		return nil
 	}
@@ -449,9 +415,11 @@ func DeepCopy_v1_ImageStreamTag(in interface{}, out interface{}, c *conversion.C
 	{
 		in := in.(*ImageStreamTag)
 		out := out.(*ImageStreamTag)
-		out.TypeMeta = in.TypeMeta
-		if err := api_v1.DeepCopy_v1_ObjectMeta(&in.ObjectMeta, &out.ObjectMeta, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.ObjectMeta); err != nil {
 			return err
+		} else {
+			out.ObjectMeta = *newVal.(*meta_v1.ObjectMeta)
 		}
 		if in.Tag != nil {
 			in, out := &in.Tag, &out.Tag
@@ -459,10 +427,7 @@ func DeepCopy_v1_ImageStreamTag(in interface{}, out interface{}, c *conversion.C
 			if err := DeepCopy_v1_TagReference(*in, *out, c); err != nil {
 				return err
 			}
-		} else {
-			out.Tag = nil
 		}
-		out.Generation = in.Generation
 		if in.Conditions != nil {
 			in, out := &in.Conditions, &out.Conditions
 			*out = make([]TagEventCondition, len(*in))
@@ -471,8 +436,6 @@ func DeepCopy_v1_ImageStreamTag(in interface{}, out interface{}, c *conversion.C
 					return err
 				}
 			}
-		} else {
-			out.Conditions = nil
 		}
 		if err := DeepCopy_v1_Image(&in.Image, &out.Image, c); err != nil {
 			return err
@@ -485,8 +448,7 @@ func DeepCopy_v1_ImageStreamTagList(in interface{}, out interface{}, c *conversi
 	{
 		in := in.(*ImageStreamTagList)
 		out := out.(*ImageStreamTagList)
-		out.TypeMeta = in.TypeMeta
-		out.ListMeta = in.ListMeta
+		*out = *in
 		if in.Items != nil {
 			in, out := &in.Items, &out.Items
 			*out = make([]ImageStreamTag, len(*in))
@@ -495,8 +457,6 @@ func DeepCopy_v1_ImageStreamTagList(in interface{}, out interface{}, c *conversi
 					return err
 				}
 			}
-		} else {
-			out.Items = nil
 		}
 		return nil
 	}
@@ -506,7 +466,7 @@ func DeepCopy_v1_NamedTagEventList(in interface{}, out interface{}, c *conversio
 	{
 		in := in.(*NamedTagEventList)
 		out := out.(*NamedTagEventList)
-		out.Tag = in.Tag
+		*out = *in
 		if in.Items != nil {
 			in, out := &in.Items, &out.Items
 			*out = make([]TagEvent, len(*in))
@@ -515,8 +475,6 @@ func DeepCopy_v1_NamedTagEventList(in interface{}, out interface{}, c *conversio
 					return err
 				}
 			}
-		} else {
-			out.Items = nil
 		}
 		if in.Conditions != nil {
 			in, out := &in.Conditions, &out.Conditions
@@ -526,8 +484,6 @@ func DeepCopy_v1_NamedTagEventList(in interface{}, out interface{}, c *conversio
 					return err
 				}
 			}
-		} else {
-			out.Conditions = nil
 		}
 		return nil
 	}
@@ -537,10 +493,7 @@ func DeepCopy_v1_RepositoryImportSpec(in interface{}, out interface{}, c *conver
 	{
 		in := in.(*RepositoryImportSpec)
 		out := out.(*RepositoryImportSpec)
-		out.From = in.From
-		out.ImportPolicy = in.ImportPolicy
-		out.ReferencePolicy = in.ReferencePolicy
-		out.IncludeManifest = in.IncludeManifest
+		*out = *in
 		return nil
 	}
 }
@@ -549,8 +502,11 @@ func DeepCopy_v1_RepositoryImportStatus(in interface{}, out interface{}, c *conv
 	{
 		in := in.(*RepositoryImportStatus)
 		out := out.(*RepositoryImportStatus)
-		if err := unversioned.DeepCopy_unversioned_Status(&in.Status, &out.Status, c); err != nil {
+		*out = *in
+		if newVal, err := c.DeepCopy(&in.Status); err != nil {
 			return err
+		} else {
+			out.Status = *newVal.(*meta_v1.Status)
 		}
 		if in.Images != nil {
 			in, out := &in.Images, &out.Images
@@ -560,15 +516,11 @@ func DeepCopy_v1_RepositoryImportStatus(in interface{}, out interface{}, c *conv
 					return err
 				}
 			}
-		} else {
-			out.Images = nil
 		}
 		if in.AdditionalTags != nil {
 			in, out := &in.AdditionalTags, &out.AdditionalTags
 			*out = make([]string, len(*in))
 			copy(*out, *in)
-		} else {
-			out.AdditionalTags = nil
 		}
 		return nil
 	}
@@ -578,12 +530,9 @@ func DeepCopy_v1_SignatureCondition(in interface{}, out interface{}, c *conversi
 	{
 		in := in.(*SignatureCondition)
 		out := out.(*SignatureCondition)
-		out.Type = in.Type
-		out.Status = in.Status
+		*out = *in
 		out.LastProbeTime = in.LastProbeTime.DeepCopy()
 		out.LastTransitionTime = in.LastTransitionTime.DeepCopy()
-		out.Reason = in.Reason
-		out.Message = in.Message
 		return nil
 	}
 }
@@ -592,8 +541,7 @@ func DeepCopy_v1_SignatureGenericEntity(in interface{}, out interface{}, c *conv
 	{
 		in := in.(*SignatureGenericEntity)
 		out := out.(*SignatureGenericEntity)
-		out.Organization = in.Organization
-		out.CommonName = in.CommonName
+		*out = *in
 		return nil
 	}
 }
@@ -602,7 +550,7 @@ func DeepCopy_v1_SignatureIssuer(in interface{}, out interface{}, c *conversion.
 	{
 		in := in.(*SignatureIssuer)
 		out := out.(*SignatureIssuer)
-		out.SignatureGenericEntity = in.SignatureGenericEntity
+		*out = *in
 		return nil
 	}
 }
@@ -611,8 +559,7 @@ func DeepCopy_v1_SignatureSubject(in interface{}, out interface{}, c *conversion
 	{
 		in := in.(*SignatureSubject)
 		out := out.(*SignatureSubject)
-		out.SignatureGenericEntity = in.SignatureGenericEntity
-		out.PublicKeyID = in.PublicKeyID
+		*out = *in
 		return nil
 	}
 }
@@ -621,10 +568,8 @@ func DeepCopy_v1_TagEvent(in interface{}, out interface{}, c *conversion.Cloner)
 	{
 		in := in.(*TagEvent)
 		out := out.(*TagEvent)
+		*out = *in
 		out.Created = in.Created.DeepCopy()
-		out.DockerImageReference = in.DockerImageReference
-		out.Image = in.Image
-		out.Generation = in.Generation
 		return nil
 	}
 }
@@ -633,12 +578,8 @@ func DeepCopy_v1_TagEventCondition(in interface{}, out interface{}, c *conversio
 	{
 		in := in.(*TagEventCondition)
 		out := out.(*TagEventCondition)
-		out.Type = in.Type
-		out.Status = in.Status
+		*out = *in
 		out.LastTransitionTime = in.LastTransitionTime.DeepCopy()
-		out.Reason = in.Reason
-		out.Message = in.Message
-		out.Generation = in.Generation
 		return nil
 	}
 }
@@ -647,8 +588,7 @@ func DeepCopy_v1_TagImportPolicy(in interface{}, out interface{}, c *conversion.
 	{
 		in := in.(*TagImportPolicy)
 		out := out.(*TagImportPolicy)
-		out.Insecure = in.Insecure
-		out.Scheduled = in.Scheduled
+		*out = *in
 		return nil
 	}
 }
@@ -657,33 +597,24 @@ func DeepCopy_v1_TagReference(in interface{}, out interface{}, c *conversion.Clo
 	{
 		in := in.(*TagReference)
 		out := out.(*TagReference)
-		out.Name = in.Name
+		*out = *in
 		if in.Annotations != nil {
 			in, out := &in.Annotations, &out.Annotations
 			*out = make(map[string]string)
 			for key, val := range *in {
 				(*out)[key] = val
 			}
-		} else {
-			out.Annotations = nil
 		}
 		if in.From != nil {
 			in, out := &in.From, &out.From
 			*out = new(api_v1.ObjectReference)
 			**out = **in
-		} else {
-			out.From = nil
 		}
-		out.Reference = in.Reference
 		if in.Generation != nil {
 			in, out := &in.Generation, &out.Generation
 			*out = new(int64)
 			**out = **in
-		} else {
-			out.Generation = nil
 		}
-		out.ImportPolicy = in.ImportPolicy
-		out.ReferencePolicy = in.ReferencePolicy
 		return nil
 	}
 }
@@ -692,7 +623,7 @@ func DeepCopy_v1_TagReferencePolicy(in interface{}, out interface{}, c *conversi
 	{
 		in := in.(*TagReferencePolicy)
 		out := out.(*TagReferencePolicy)
-		out.Type = in.Type
+		*out = *in
 		return nil
 	}
 }

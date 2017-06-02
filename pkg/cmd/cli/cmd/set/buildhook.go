@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	"k8s.io/kubernetes/pkg/runtime"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
 	"github.com/openshift/origin/pkg/cmd/templates"
@@ -57,13 +57,16 @@ type BuildHookOptions struct {
 	Builder *resource.Builder
 	Infos   []*resource.Info
 
-	Encoder       runtime.Encoder
-	OutputVersion unversioned.GroupVersion
+	Encoder runtime.Encoder
 
 	Filenames []string
 	Selector  string
 	All       bool
+	Output    string
 
+	Cmd *cobra.Command
+
+	Local       bool
 	ShortOutput bool
 	Mapper      meta.RESTMapper
 
@@ -110,8 +113,10 @@ func NewCmdBuildHook(fullName string, f *clientcmd.Factory, out, errOut io.Write
 	cmd.Flags().BoolVar(&options.Entrypoint, "command", options.Entrypoint, "If true, set the entrypoint of the hook container to the given command")
 	cmd.Flags().StringVar(&options.Script, "script", options.Script, "Specify a script to run for the build-hook")
 	cmd.Flags().BoolVar(&options.Remove, "remove", options.Remove, "If true, remove the build hook.")
+	cmd.Flags().BoolVar(&options.Local, "local", false, "If true, set image will NOT contact api-server but run locally.")
 
 	cmd.MarkFlagFilename("filename", "yaml", "yml", "json")
+	kcmdutil.AddDryRunFlag(cmd)
 
 	return cmd
 }
@@ -130,14 +135,8 @@ func (o *BuildHookOptions) Complete(f *clientcmd.Factory, cmd *cobra.Command, ar
 	if err != nil {
 		return err
 	}
-	clientConfig, err := f.ClientConfig()
-	if err != nil {
-		return err
-	}
-	o.OutputVersion, err = kcmdutil.OutputVersion(cmd, clientConfig.GroupVersion)
-	if err != nil {
-		return err
-	}
+
+	o.Cmd = cmd
 
 	mapper, typer := f.Object()
 	o.Builder = resource.NewBuilder(mapper, typer, resource.ClientMapperFunc(f.ClientForMapping), kapi.Codecs.UniversalDecoder()).
@@ -148,15 +147,18 @@ func (o *BuildHookOptions) Complete(f *clientcmd.Factory, cmd *cobra.Command, ar
 		ResourceNames("buildconfigs", resources...).
 		Flatten()
 
-	if o.All {
-		o.Builder.ResourceTypes("buildconfigs").SelectAllParam(o.All)
+	if !o.Local {
+		o.Builder = o.Builder.
+			SelectorParam(o.Selector).
+			ResourceNames("buildconfigs", resources...)
+		if o.All {
+			o.Builder.ResourceTypes("buildconfigs").SelectAllParam(o.All)
+		}
 	}
 
-	output := kcmdutil.GetFlagString(cmd, "output")
-	if len(output) != 0 {
-		o.PrintObject = func(infos []*resource.Info) error {
-			return f.PrintResourceInfos(cmd, infos, o.Out)
-		}
+	o.Output = kcmdutil.GetFlagString(cmd, "output")
+	o.PrintObject = func(infos []*resource.Info) error {
+		return f.PrintResourceInfos(cmd, infos, o.Out)
 	}
 
 	o.Encoder = f.JSONEncoder()
@@ -217,7 +219,7 @@ func (o *BuildHookOptions) Run() error {
 		return fmt.Errorf("%s/%s is not a build config", infos[0].Mapping.Resource, infos[0].Name)
 	}
 
-	if o.PrintObject != nil {
+	if len(o.Output) > 0 || o.Local || kcmdutil.GetDryRunFlag(o.Cmd) {
 		return o.PrintObject(infos)
 	}
 
@@ -234,7 +236,7 @@ func (o *BuildHookOptions) Run() error {
 			continue
 		}
 
-		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, kapi.StrategicMergePatchType, patch.Patch)
+		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, types.StrategicMergePatchType, patch.Patch)
 		if err != nil {
 			fmt.Fprintf(o.Err, "error: %v\n", err)
 			failed = true

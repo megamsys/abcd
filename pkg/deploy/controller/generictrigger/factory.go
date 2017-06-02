@@ -7,12 +7,13 @@ import (
 
 	"github.com/golang/glog"
 
-	"k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+	kcorelistersinternal "k8s.io/kubernetes/pkg/client/listers/core/internalversion"
 	kcontroller "k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/util/workqueue"
 
 	osclient "github.com/openshift/origin/pkg/client"
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
@@ -41,14 +42,19 @@ func NewDeploymentTriggerController(dcInformer, rcInformer, streamInformer cache
 		AddFunc:    c.addDeploymentConfig,
 		UpdateFunc: c.updateDeploymentConfig,
 	})
-	streamInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    c.addImageStream,
-		UpdateFunc: c.updateImageStream,
-	})
+
+	if streamInformer != nil {
+		c.triggerFromImages = true
+		streamInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    c.addImageStream,
+			UpdateFunc: c.updateImageStream,
+		})
+	}
 
 	c.dcLister.Indexer = dcInformer.GetIndexer()
-	c.rcLister.Indexer = rcInformer.GetIndexer()
 	c.dcListerSynced = dcInformer.HasSynced
+
+	c.rcLister = kcorelistersinternal.NewReplicationControllerLister(rcInformer.GetIndexer())
 	c.rcListerSynced = rcInformer.HasSynced
 	return c
 }

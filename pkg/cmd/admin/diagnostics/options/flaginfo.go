@@ -4,7 +4,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/pflag"
-	kclientcmd "k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
+	kclientcmd "k8s.io/client-go/tools/clientcmd"
 )
 
 // FlagInfos serve as a customizable intermediary between the command flags and
@@ -53,6 +53,10 @@ const (
 	FlagImageTemplateName       = "images"
 	FlagLatestImageName         = "latest-images"
 	FlagPreventModificationName = "prevent-modification"
-	FlagNetworkDiagLogDir       = "network-logdir"
-	FlagNetworkDiagPodImage     = "network-pod-image"
+
+	FlagNetworkDiagLogDir          = "network-logdir"
+	FlagNetworkDiagPodImage        = "network-pod-image"
+	FlagNetworkDiagTestPodImage    = "network-test-pod-image"
+	FlagNetworkDiagTestPodProtocol = "network-test-pod-protocol"
+	FlagNetworkDiagTestPodPort     = "network-test-pod-port"
 )

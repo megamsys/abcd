@@ -13,15 +13,16 @@ import (
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/resource"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/serviceaccount"
-	"k8s.io/kubernetes/pkg/util/intstr"
-	"k8s.io/kubernetes/pkg/util/validation"
 
 	authapi "github.com/openshift/origin/pkg/authorization/api"
 	"github.com/openshift/origin/pkg/cmd/server/bootstrappolicy"
@@ -282,16 +283,16 @@ func NewCmdRouter(f *clientcmd.Factory, parentName, name string, out, errout io.
 	cmd.Flags().StringVar(&cfg.Labels, "labels", cfg.Labels, "A set of labels to uniquely identify the router and its components.")
 	cmd.Flags().BoolVar(&cfg.SecretsAsEnv, "secrets-as-env", cfg.SecretsAsEnv, "If true, use environment variables for master secrets.")
 	cmd.Flags().Bool("create", false, "deprecated; this is now the default behavior")
-	cmd.Flags().StringVar(&cfg.DefaultCertificate, "default-cert", cfg.DefaultCertificate, "Optional path to a certificate file that be used as the default certificate.  The file should contain the cert, key, and any CA certs necessary for the router to serve the certificate.")
+	cmd.Flags().StringVar(&cfg.DefaultCertificate, "default-cert", cfg.DefaultCertificate, "Optional path to a certificate file that be used as the default certificate.  The file should contain the cert, key, and any CA certs necessary for the router to serve the certificate. Does not apply to external appliance based routers (e.g. F5)")
 	cmd.Flags().StringVar(&cfg.Selector, "selector", cfg.Selector, "Selector used to filter nodes on deployment. Used to run routers on a specific set of nodes.")
 	cmd.Flags().StringVar(&cfg.ServiceAccount, "service-account", cfg.ServiceAccount, "Name of the service account to use to run the router pod.")
 	cmd.Flags().IntVar(&cfg.StatsPort, "stats-port", cfg.StatsPort, "If the underlying router implementation can provide statistics this is a hint to expose it on this port. Specify 0 if you want to turn off exposing the statistics.")
-	cmd.Flags().StringVar(&cfg.StatsPassword, "stats-password", cfg.StatsPassword, "If the underlying router implementation can provide statistics this is the requested password for auth.  If not set a password will be generated.")
-	cmd.Flags().StringVar(&cfg.StatsUsername, "stats-user", cfg.StatsUsername, "If the underlying router implementation can provide statistics this is the requested username for auth.")
-	cmd.Flags().BoolVar(&cfg.ExposeMetrics, "expose-metrics", cfg.ExposeMetrics, "If true, attempts to run an extra container in the pod to expose metrics - the image will either be set depending on the router implementation or provided with --metrics-image.")
-	cmd.Flags().StringVar(&cfg.MetricsImage, "metrics-image", cfg.MetricsImage, "If --expose-metrics is specified this is the image to use to run a sidecar container in the pod exposing metrics. If not set and --expose-metrics is true the image will depend on router implementation.")
-	cmd.Flags().BoolVar(&cfg.HostNetwork, "host-network", cfg.HostNetwork, "If true (the default), then use host networking rather than using a separate container network stack.")
-	cmd.Flags().BoolVar(&cfg.HostPorts, "host-ports", cfg.HostPorts, "If true (the default), when not using host networking host ports will be exposed.")
+	cmd.Flags().StringVar(&cfg.StatsPassword, "stats-password", cfg.StatsPassword, "If the underlying router implementation can provide statistics this is the requested password for auth.  If not set a password will be generated. Not available for external appliance based routers (e.g. F5)")
+	cmd.Flags().StringVar(&cfg.StatsUsername, "stats-user", cfg.StatsUsername, "If the underlying router implementation can provide statistics this is the requested username for auth. Not available for external appliance based routers (e.g. F5)")
+	cmd.Flags().BoolVar(&cfg.ExposeMetrics, "expose-metrics", cfg.ExposeMetrics, "If true, attempts to run an extra container in the pod to expose metrics - the image will either be set depending on the router implementation or provided with --metrics-image. Not useful where comprehensive metrics are available through the stats-port (e.g. haproxy router)")
+	cmd.Flags().StringVar(&cfg.MetricsImage, "metrics-image", cfg.MetricsImage, "If --expose-metrics is specified this is the image to use to run a sidecar container in the pod exposing metrics. If not set and --expose-metrics is true the image will depend on router implementation. Not useful where comprehensive metrics are available through the stats-port (e.g. haproxy router)")
+	cmd.Flags().BoolVar(&cfg.HostNetwork, "host-network", cfg.HostNetwork, "If true (the default), then use host networking rather than using a separate container network stack. Not required for external appliance based routers (e.g. F5)")
+	cmd.Flags().BoolVar(&cfg.HostPorts, "host-ports", cfg.HostPorts, "If true (the default), when not using host networking host ports will be exposed. Not required for external appliance based routers (e.g. F5)")
 	cmd.Flags().StringVar(&cfg.ExternalHost, "external-host", cfg.ExternalHost, "If the underlying router implementation connects with an external host, this is the external host's hostname.")
 	cmd.Flags().StringVar(&cfg.ExternalHostUsername, "external-host-username", cfg.ExternalHostUsername, "If the underlying router implementation connects with an external host, this is the username for authenticating with the external host.")
 	cmd.Flags().StringVar(&cfg.ExternalHostPassword, "external-host-password", cfg.ExternalHostPassword, "If the underlying router implementation connects with an external host, this is the password for authenticating with the external host.")
@@ -303,7 +304,7 @@ func NewCmdRouter(f *clientcmd.Factory, parentName, name string, out, errout io.
 	cmd.Flags().BoolVar(&cfg.ExternalHostInsecure, "external-host-insecure", cfg.ExternalHostInsecure, "If the underlying router implementation connects with an external host over a secure connection, this causes the router to skip strict certificate verification with the external host.")
 	cmd.Flags().StringVar(&cfg.ExternalHostPartitionPath, "external-host-partition-path", cfg.ExternalHostPartitionPath, "If the underlying router implementation uses partitions for control boundaries, this is the path to use for that partition.")
 	cmd.Flags().BoolVar(&cfg.DisableNamespaceOwnershipCheck, "disable-namespace-ownership-check", cfg.DisableNamespaceOwnershipCheck, "Disables the namespace ownership check and allows different namespaces to claim either different paths to a route host or overlapping host names in case of a wildcard route. The default behavior (false) to restrict claims to the oldest namespace that has claimed either the host or the subdomain. Please be aware that if namespace ownership checks are disabled, routes in a different namespace can use this mechanism to 'steal' sub-paths for existing domains. This is only safe if route creation privileges are restricted, or if all the users can be trusted.")
-	cmd.Flags().StringVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "Specifies the maximum number of concurrent connections.")
+	cmd.Flags().StringVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "Specifies the maximum number of concurrent connections. Not supported for F5.")
 
 	cfg.Action.BindForOutput(cmd.Flags())
 	cmd.Flags().String("output-version", "", "The preferred API versions of the output objects")
@@ -325,7 +326,7 @@ func generateSecretsConfig(cfg *RouterConfig, namespace string, defaultCert []by
 		}
 
 		secret := &kapi.Secret{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: privkeySecretName,
 			},
 			Data: map[string][]byte{privkeyName: privkeyData},
@@ -366,7 +367,7 @@ func generateSecretsConfig(cfg *RouterConfig, namespace string, defaultCert []by
 		}
 		// The TLSCertKey contains the pem file passed in as the default cert
 		secret := &kapi.Secret{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: certName,
 			},
 			Type: kapi.SecretTypeTLS,
@@ -576,7 +577,7 @@ func RunCmdRouter(f *clientcmd.Factory, cmd *cobra.Command, out, errout io.Write
 
 	output := cfg.Action.ShouldPrint()
 	generate := output
-	service, err := kClient.Core().Services(namespace).Get(name)
+	service, err := kClient.Core().Services(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
 		if !generate {
 			if !errors.IsNotFound(err) {
@@ -733,9 +734,9 @@ func RunCmdRouter(f *clientcmd.Factory, cmd *cobra.Command, out, errout io.Write
 	}
 
 	objects = append(objects,
-		&kapi.ServiceAccount{ObjectMeta: kapi.ObjectMeta{Name: cfg.ServiceAccount}},
+		&kapi.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: cfg.ServiceAccount}},
 		&authapi.ClusterRoleBinding{
-			ObjectMeta: kapi.ObjectMeta{Name: generateRoleBindingName(cfg.Name)},
+			ObjectMeta: metav1.ObjectMeta{Name: generateRoleBindingName(cfg.Name)},
 			Subjects: []kapi.ObjectReference{
 				{
 					Kind:      "ServiceAccount",
@@ -751,7 +752,7 @@ func RunCmdRouter(f *clientcmd.Factory, cmd *cobra.Command, out, errout io.Write
 	)
 
 	objects = append(objects, &deployapi.DeploymentConfig{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
 			Labels: label,
 		},
@@ -766,7 +767,7 @@ func RunCmdRouter(f *clientcmd.Factory, cmd *cobra.Command, out, errout io.Write
 				{Type: deployapi.DeploymentTriggerOnConfigChange},
 			},
 			Template: &kapi.PodTemplateSpec{
-				ObjectMeta: kapi.ObjectMeta{Labels: label},
+				ObjectMeta: metav1.ObjectMeta{Labels: label},
 				Spec: kapi.PodSpec{
 					SecurityContext: &kapi.PodSecurityContext{
 						HostNetwork: cfg.HostNetwork,
@@ -785,6 +786,13 @@ func RunCmdRouter(f *clientcmd.Factory, cmd *cobra.Command, out, errout io.Write
 	for i := range objects {
 		switch t := objects[i].(type) {
 		case *kapi.Service:
+			if t.Annotations == nil {
+				t.Annotations = make(map[string]string)
+			}
+			t.Annotations["prometheus.io/scrape"] = "true"
+			t.Annotations["prometheus.io/port"] = "1935"
+			t.Annotations["prometheus.io/username"] = cfg.StatsUsername
+			t.Annotations["prometheus.io/password"] = cfg.StatsPassword
 			t.Spec.ClusterIP = clusterIP
 			for j, servicePort := range t.Spec.Ports {
 				for _, targetPort := range ports {
@@ -874,7 +882,7 @@ func validateServiceAccount(client kclientset.Interface, ns string, serviceAccou
 		return nil
 	}
 	// get cluster sccs
-	sccList, err := client.Core().SecurityContextConstraints().List(kapi.ListOptions{})
+	sccList, err := client.Core().SecurityContextConstraints().List(metav1.ListOptions{})
 	if err != nil {
 		if !errors.IsUnauthorized(err) {
 			return fmt.Errorf("could not retrieve list of security constraints to verify service account %q: %v", serviceAccount, err)

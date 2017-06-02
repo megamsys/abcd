@@ -40,35 +40,17 @@ function os::test::extended::setup () {
 		export TEST_REPORT_DIR="${ARTIFACT_DIR}"
 	fi
 
-	# TODO: we shouldn't have to do this much work just to get tests to run against a real
-	#   cluster, until then
-	if [[ -n "${TEST_ONLY-}" ]]; then
-		function cleanup() {
-			out=$?
-			os::cleanup::dump_container_logs
-			os::test::junit::generate_oscmd_report
-			os::log::info "Exiting"
-			return $out
-		}
-		trap "exit" INT TERM
-		trap "cleanup" EXIT
+	function cleanup() {
+		return_code=$?
+		os::cleanup::all "${return_code}"
+		exit "${return_code}"
+	}
+	trap "cleanup" EXIT
 
-		os::log::info "Not starting server"
+	if [[ -n "${TEST_ONLY-}" ]]; then
+		os::log::info "Running tests against existing cluster..."
 		return 0
 	fi
-
-	function cleanup() {
-		out=$?
-		cleanup_openshift
-
-		os::test::junit::generate_oscmd_report
-
-		os::log::info "Exiting"
-		return $out
-	}
-
-	trap "exit" INT TERM
-	trap "cleanup" EXIT
 
 	os::util::ensure::built_binary_exists 'openshift'
 
@@ -122,7 +104,7 @@ function os::test::extended::setup () {
 	openshift ex config patch "${SERVER_CONFIG_DIR}/master/master-config.orig2.yaml" --patch="{\"auditConfig\": {\"enabled\": true}}"  > "${SERVER_CONFIG_DIR}/master/master-config.yaml"
 
 	cp "${SERVER_CONFIG_DIR}/master/master-config.yaml" "${SERVER_CONFIG_DIR}/master/master-config.orig2.yaml"
-	openshift ex config patch "${SERVER_CONFIG_DIR}/master/master-config.orig2.yaml" --patch="{\"enableTemplateServiceBroker\": true}"  > "${SERVER_CONFIG_DIR}/master/master-config.yaml"
+	openshift ex config patch "${SERVER_CONFIG_DIR}/master/master-config.orig2.yaml" --patch="{\"templateServiceBrokerConfig\": {\"templateNamespaces\": [\"openshift\"]}}"  > "${SERVER_CONFIG_DIR}/master/master-config.yaml"
 
 	# If the XFS volume dir mount point exists enable local storage quota in node-config.yaml so these tests can pass:
 	if [[ -n "${LOCAL_STORAGE_QUOTA}" ]]; then
@@ -193,18 +175,18 @@ function os::test::extended::run () {
 
 	if [[ -n "${SHOW_ALL-}" ]]; then
 		PRINT_TESTS=1
-		os::test::extended::test_list "${listArgs[@]}"
+		os::test::extended::test_list "${listArgs[@]:+"${listArgs[@]}"}"
 		return
 	fi
 
-	os::test::extended::test_list "${listArgs[@]}"
+	os::test::extended::test_list "${listArgs[@]:+"${listArgs[@]}"}"
 
 	if [[ "${TEST_COUNT}" -eq 0 ]]; then
 		os::log::warning "No tests were selected"
 		return
 	fi
 
-	ginkgo -v -noColor "${runArgs[@]}" "$( os::util::find::built_binary extended.test )" "$@"
+	ginkgo -v -noColor "${runArgs[@]:+"${runArgs[@]}"}" "$( os::util::find::built_binary extended.test )" "$@"
 }
 
 # Create a list of extended tests to be run with the given arguments
@@ -221,7 +203,7 @@ function os::test::extended::test_list () {
 	while IFS= read -r; do
 		full_test_list+=( "${REPLY}" )
 	done < <(TEST_OUTPUT_QUIET=true extended.test "$@" --ginkgo.dryRun --ginkgo.noColor )
-	if [[ "{$REPLY}" ]]; then lines+=( "$REPLY" ); fi
+	if [[ "${REPLY}" ]]; then lines+=( "$REPLY" ); fi
 
 	for test in "${full_test_list[@]}"; do
 		if [[ -n "${SKIP_ONLY:-}" ]]; then
@@ -259,119 +241,3 @@ function os::test::extended::merge_junit () {
 	mv "${output}" "${TEST_REPORT_DIR}/junit.xml"
 }
 readonly -f os::test::extended::merge_junit
-
-# Not run by any suite
-readonly EXCLUDED_TESTS=(
-	"\[Skipped\]"
-	"\[Disruptive\]"
-	"\[Slow\]"
-	"\[Flaky\]"
-	"\[Compatibility\]"
-
-	"\[Feature:Performance\]"
-
-	# not enabled in Origin yet
-	"\[Feature:GarbageCollector\]"
-
-	# Depends on external components, may not need yet
-	Monitoring              # Not installed, should be
-	"Cluster level logging" # Not installed yet
-	Kibana                  # Not installed
-	Ubernetes               # Can't set zone labels today
-	kube-ui                 # Not installed by default
-	"^Kubernetes Dashboard"  # Not installed by default (also probably slow image pull)
-
-	"\[Feature:Federation\]"   # Not enabled yet
-	"\[Feature:Federation12\]"   # Not enabled yet
-	Ingress                    # Not enabled yet
-	"Cinder"                   # requires an OpenStack cluster
-	"should support r/w"       # hostPath: This test expects that host's tmp dir is WRITABLE by a container.  That isn't something we need to guarantee for openshift.
-	"should check that the kubernetes-dashboard instance is alive" # we don't create this
-	"\[Feature:ManualPerformance\]" # requires /resetMetrics which we don't expose
-
-	# See the CanSupport implementation in upstream to determine wether these work.
-	"Ceph RBD"      # Works if ceph-common Binary installed (but we can't guarantee this on all clusters).
-	"GlusterFS" # May work if /sbin/mount.glusterfs to be installed for plugin to work (also possibly blocked by serial pulling)
-	"should support r/w" # hostPath: This test expects that host's tmp dir is WRITABLE by a container.  That isn't something we need to guarantee for openshift.
-
-	# Failing because of https://github.com/openshift/origin/issues/12365 against a real cluster
-	"should allow starting 95 pods per node"
-
-	# Need fixing
-	"Horizontal pod autoscaling" # needs heapster
-	PersistentVolume           # https://github.com/openshift/origin/pull/6884 for recycler
-	"mount an API token into pods" # We add 6 secrets, not 1
-	"ServiceAccounts should ensure a single API token exists" # We create lots of secrets
-	"Networking should function for intra-pod" # Needs two nodes, add equiv test for 1 node, then use networking suite
-	"should test kube-proxy"     # needs 2 nodes
-	"authentication: OpenLDAP"   # needs separate setup and bucketing for openldap bootstrapping
-	"NFS"                      # no permissions https://github.com/openshift/origin/pull/6884
-	"\[Feature:Example\]"      # may need to pre-pull images
-	"NodeProblemDetector"        # requires a non-master node to run on
-	"unchanging, static URL paths for kubernetes api services" # the test needs to exclude URLs that are not part of conformance (/logs)
-
-	# Needs triage to determine why it is failing
-	"Addon update"          # TRIAGE
-	SSH                     # TRIAGE
-	"\[Feature:Upgrade\]"   # TRIAGE
-	"SELinux relabeling"    # started failing
-	"openshift mongodb replication creating from a template" # flaking on deployment
-	"Update Demo should do a rolling update of a replication controller" # this is flaky and needs triaging
-
-	# Test will never work
-	"should proxy to cadvisor" # we don't expose cAdvisor port directly for security reasons
-
-	# Need to relax security restrictions
-	"validates that InterPod Affinity and AntiAffinity is respected if matching" # this *may* now be safe
-
-	# Requires too many pods per node for the per core defaults
-	"should ensure that critical pod is scheduled in case there is no resources available"
-
-	# Need multiple nodes
-	"validates that InterPodAntiAffinity is respected if matching 2"
-
-	# Inordinately slow tests
-	"should create and stop a working application"
-	"should always delete fast" # will be uncommented in etcd3
-
-	# tested by networking.sh and requires the environment that script sets up
-	"\[networking\] OVS"
-
-	# We don't install KubeDNS
-	"should check if Kubernetes master services is included in cluster-info"
-
-	# this tests dns federation configuration via configmap, which we don't support yet
-	"DNS config map"
-)
-
-readonly SERIAL_TESTS=(
-	"\[Serial\]"
-	"\[Feature:ManualPerformance\]" # requires isolation
-	"Service endpoints latency" # requires low latency
-	"\[Feature:HighDensityPerformance\]" # requires no other namespaces
-	"Clean up pods on node" # schedules max pods per node
-)
-
-readonly CONFORMANCE_TESTS=(
-	"\[Conformance\]"
-	"Services.*NodePort"
-	"ResourceQuota should"
-	"EmptyDir"
-	"StatefulSet"
-	"Downward API"
-	"DNS for ExternalName services"
-	"DNS for pods for Hostname and Subdomain annotation"
-	"PrivilegedPod should test privileged pod"
-	"Pods should support remote command execution"
-	"Pods should support retrieving logs from the container"
-	"Kubectl client Simple pod should support"
-	"Job should run a job to completion when tasks succeed"
-	"Variable Expansion"
-	"init containers"
-	"Clean up pods on node kubelet"
-	"\[Feature\:SecurityContext\]"
-	"should create a LimitRange with defaults"
-	"Generated release_1_2 clientset"
-	"should create a pod that reads a secret"
-	"should create a pod that prints his name and namespace"
-)

@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/watch"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/watch"
 
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	"github.com/openshift/origin/pkg/router/controller"
@@ -399,6 +399,14 @@ func (p *F5Plugin) addRoute(routename, poolname, hostname, pathname string,
 			glog.V(4).Infof("Error adding TLS profile for route %s: %v",
 				routename, err)
 			return err
+		}
+
+		if tls.Termination == routeapi.TLSTerminationReencrypt {
+			// add to reencrypt dg
+			glog.V(4).Infof("Adding re-encrypt route %s for pool %s,"+
+				" hostname %s, pathname %s...",
+				routename, poolname, hostname, prettyPathname)
+			p.F5Client.AddReencryptRoute(routename, poolname, hostname)
 		}
 
 		// TODO(ramr):  need to handle redirect case for F5.

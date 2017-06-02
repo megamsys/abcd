@@ -10,14 +10,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
-	kapi "k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	kclientcmd "k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
-	kclientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
-	"k8s.io/kubernetes/pkg/util/sets"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
+	restclient "k8s.io/client-go/rest"
+	kclientcmd "k8s.io/client-go/tools/clientcmd"
+	kclientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	kterm "k8s.io/kubernetes/pkg/util/term"
 
 	"github.com/openshift/origin/pkg/client"
@@ -44,7 +45,7 @@ type LoginOptions struct {
 	Server      string
 	CAFile      string
 	InsecureTLS bool
-	APIVersion  unversioned.GroupVersion
+	APIVersion  schema.GroupVersion
 
 	// flags and printing helpers
 	Username string
@@ -66,7 +67,8 @@ type LoginOptions struct {
 
 	PathOptions *kclientcmd.PathOptions
 
-	CommandName string
+	CommandName    string
+	RequestTimeout time.Duration
 }
 
 // Gather all required information in a comprehensive order.
@@ -99,6 +101,11 @@ func (o *LoginOptions) getClientConfig() (*restclient.Config, error) {
 	}
 
 	clientConfig := &restclient.Config{}
+
+	// ensure clientConfig has timeout option
+	if o.RequestTimeout > 0 {
+		clientConfig.Timeout = o.RequestTimeout
+	}
 
 	// normalize the provided server to a format expected by config
 	serverNormalized, err := config.NormalizeServerURL(o.Server)
@@ -266,7 +273,7 @@ func (o *LoginOptions) gatherProjectInfo() error {
 		return err
 	}
 
-	projectsList, err := oClient.Projects().List(kapi.ListOptions{})
+	projectsList, err := oClient.Projects().List(metav1.ListOptions{})
 	// if we're running on kube (or likely kube), just set it to "default"
 	if kerrors.IsNotFound(err) || kerrors.IsForbidden(err) {
 		fmt.Fprintf(o.Out, "Using \"default\".  You can switch projects with:\n\n '%s project <projectname>'\n", o.CommandName)
@@ -285,7 +292,7 @@ func (o *LoginOptions) gatherProjectInfo() error {
 
 	if len(o.DefaultNamespace) > 0 && !projects.Has(o.DefaultNamespace) {
 		// Attempt a direct get of our current project in case it hasn't appeared in the list yet
-		if currentProject, err := oClient.Projects().Get(o.DefaultNamespace); err == nil {
+		if currentProject, err := oClient.Projects().Get(o.DefaultNamespace, metav1.GetOptions{}); err == nil {
 			// If we get it successfully, add it to the list
 			projectsItems = append(projectsItems, *currentProject)
 			projects.Insert(currentProject.Name)
@@ -310,14 +317,14 @@ func (o *LoginOptions) gatherProjectInfo() error {
 	default:
 		namespace := o.DefaultNamespace
 		if !projects.Has(namespace) {
-			if namespace != kapi.NamespaceDefault && projects.Has(kapi.NamespaceDefault) {
-				namespace = kapi.NamespaceDefault
+			if namespace != metav1.NamespaceDefault && projects.Has(metav1.NamespaceDefault) {
+				namespace = metav1.NamespaceDefault
 			} else {
 				namespace = projects.List()[0]
 			}
 		}
 
-		current, err := oClient.Projects().Get(namespace)
+		current, err := oClient.Projects().Get(namespace, metav1.GetOptions{})
 		if err != nil && !kerrors.IsNotFound(err) && !clientcmd.IsForbidden(err) {
 			return err
 		}

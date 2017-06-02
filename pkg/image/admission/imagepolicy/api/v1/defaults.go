@@ -1,8 +1,8 @@
 package v1
 
 import (
+	"k8s.io/apimachinery/pkg/runtime"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/runtime"
 )
 
 func SetDefaults_ImagePolicyConfig(obj *ImagePolicyConfig) {
@@ -12,6 +12,20 @@ func SetDefaults_ImagePolicyConfig(obj *ImagePolicyConfig) {
 
 	if len(obj.ResolveImages) == 0 {
 		obj.ResolveImages = Attempt
+	}
+
+	if obj.ResolutionRules == nil {
+		obj.ResolutionRules = []ImageResolutionPolicyRule{
+			{TargetResource: GroupResource{Resource: "pods"}, LocalNames: true},
+			{TargetResource: GroupResource{Group: "build.openshift.io", Resource: "builds"}, LocalNames: true},
+			{TargetResource: GroupResource{Resource: "replicationcontrollers"}, LocalNames: true},
+			{TargetResource: GroupResource{Group: "extensions", Resource: "replicasets"}, LocalNames: true},
+			{TargetResource: GroupResource{Group: "batch", Resource: "jobs"}, LocalNames: true},
+
+			// TODO: consider adding these
+			// {TargetResource: GroupResource{Group: "extensions", Resource: "deployments"}, LocalNames: true},
+			// {TargetResource: GroupResource{Group: "apps", Resource: "statefulsets"}, LocalNames: true},
+		}
 	}
 
 	for i := range obj.ExecutionRules {

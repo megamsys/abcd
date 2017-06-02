@@ -9,10 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kapi "k8s.io/kubernetes/pkg/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
+	buildclient "github.com/openshift/origin/pkg/build/client"
 	"github.com/openshift/origin/pkg/build/prune"
 	"github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/cmd/templates"
@@ -87,7 +88,7 @@ func (o *PruneBuildsOptions) Complete(f *clientcmd.Factory, cmd *cobra.Command, 
 		return kcmdutil.UsageError(cmd, "no arguments are allowed to this command")
 	}
 
-	o.Namespace = kapi.NamespaceAll
+	o.Namespace = metav1.NamespaceAll
 	if cmd.Flags().Lookup("namespace").Changed {
 		var err error
 		o.Namespace, _, err = f.DefaultNamespace()
@@ -122,7 +123,7 @@ func (o PruneBuildsOptions) Validate() error {
 
 // Run contains all the necessary functionality for the OpenShift cli prune builds command.
 func (o PruneBuildsOptions) Run() error {
-	buildConfigList, err := o.OSClient.BuildConfigs(o.Namespace).List(kapi.ListOptions{})
+	buildConfigList, err := o.OSClient.BuildConfigs(o.Namespace).List(metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -131,7 +132,7 @@ func (o PruneBuildsOptions) Run() error {
 		buildConfigs = append(buildConfigs, &buildConfigList.Items[i])
 	}
 
-	buildList, err := o.OSClient.Builds(o.Namespace).List(kapi.ListOptions{})
+	buildList, err := o.OSClient.Builds(o.Namespace).List(metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -156,7 +157,7 @@ func (o PruneBuildsOptions) Run() error {
 	buildDeleter := &describingBuildDeleter{w: w}
 
 	if o.Confirm {
-		buildDeleter.delegate = prune.NewBuildDeleter(o.OSClient)
+		buildDeleter.delegate = buildclient.NewBuildDeleter(o.OSClient)
 	} else {
 		fmt.Fprintln(os.Stderr, "Dry run enabled - no modifications will be made. Add --confirm to remove builds")
 	}
@@ -168,11 +169,11 @@ func (o PruneBuildsOptions) Run() error {
 // If a delegate exists, its DeleteBuild function is invoked prior to returning.
 type describingBuildDeleter struct {
 	w             io.Writer
-	delegate      prune.BuildDeleter
+	delegate      buildclient.BuildDeleter
 	headerPrinted bool
 }
 
-var _ prune.BuildDeleter = &describingBuildDeleter{}
+var _ buildclient.BuildDeleter = &describingBuildDeleter{}
 
 func (p *describingBuildDeleter) DeleteBuild(build *buildapi.Build) error {
 	if !p.headerPrinted {

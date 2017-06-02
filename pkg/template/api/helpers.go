@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
 )
 
 // AddObjectsToTemplate adds the objects to the template using the target versions to choose the conversion destination
-func AddObjectsToTemplate(template *Template, objects []runtime.Object, targetVersions ...unversioned.GroupVersion) error {
+func AddObjectsToTemplate(template *Template, objects []runtime.Object, targetVersions ...schema.GroupVersion) error {
 	for i := range objects {
 		obj := objects[i]
 		if obj == nil {
@@ -25,7 +25,7 @@ func AddObjectsToTemplate(template *Template, objects []runtime.Object, targetVe
 			return err
 		}
 
-		var targetVersion *unversioned.GroupVersion
+		var targetVersion *schema.GroupVersion
 	outerLoop:
 		for j := range targetVersions {
 			possibleVersion := targetVersions[j]
@@ -45,5 +45,18 @@ func AddObjectsToTemplate(template *Template, objects []runtime.Object, targetVe
 	}
 
 	return nil
+}
 
+// FilterTemplateInstanceCondition returns a new []TemplateInstanceCondition,
+// ensuring that it does not contain conditions of condType.
+func FilterTemplateInstanceCondition(conditions []TemplateInstanceCondition, condType TemplateInstanceConditionType) []TemplateInstanceCondition {
+	newConditions := make([]TemplateInstanceCondition, 0, len(conditions)+1)
+
+	for _, c := range conditions {
+		if c.Type != condType {
+			newConditions = append(newConditions, c)
+		}
+	}
+
+	return newConditions
 }

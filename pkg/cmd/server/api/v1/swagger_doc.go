@@ -36,6 +36,15 @@ func (AdmissionPluginConfig) SwaggerDoc() map[string]string {
 	return map_AdmissionPluginConfig
 }
 
+var map_AggregatorConfig = map[string]string{
+	"":                "AggregatorConfig holds information required to make the aggregator function.",
+	"proxyClientInfo": "ProxyClientInfo specifies the client cert/key to use when proxying to aggregated API servers",
+}
+
+func (AggregatorConfig) SwaggerDoc() map[string]string {
+	return map_AggregatorConfig
+}
+
 var map_AllowAllPasswordIdentityProvider = map[string]string{
 	"": "AllowAllPasswordIdentityProvider provides identities for users authenticating using non-empty passwords",
 }
@@ -133,11 +142,23 @@ func (ClientConnectionOverrides) SwaggerDoc() map[string]string {
 
 var map_ControllerConfig = map[string]string{
 	"":                   "ControllerConfig holds configuration values for controllers",
+	"election":           "Election defines the configuration for electing a controller instance to make changes to the cluster. If unspecified, the ControllerTTL value is checked to determine whether the legacy direct etcd election code will be used.",
 	"serviceServingCert": "ServiceServingCert holds configuration for service serving cert signer which creates cert/key pairs for pods fulfilling a service to serve with.",
 }
 
 func (ControllerConfig) SwaggerDoc() map[string]string {
 	return map_ControllerConfig
+}
+
+var map_ControllerElectionConfig = map[string]string{
+	"":              "ControllerElectionConfig contains configuration values for deciding how a controller will be elected to act as leader.",
+	"lockName":      "LockName is the resource name used to act as the lock for determining which controller instance should lead.",
+	"lockNamespace": "LockNamespace is the resource namespace used to act as the lock for determining which controller instance should lead. It defaults to \"kube-system\"",
+	"lockResource":  "LockResource is the group and resource name to use to coordinate for the controller lock. If unset, defaults to \"endpoints\".",
+}
+
+func (ControllerElectionConfig) SwaggerDoc() map[string]string {
+	return map_ControllerElectionConfig
 }
 
 var map_DNSConfig = map[string]string{
@@ -169,8 +190,10 @@ func (DenyAllPasswordIdentityProvider) SwaggerDoc() map[string]string {
 }
 
 var map_DockerConfig = map[string]string{
-	"":                "DockerConfig holds Docker related configuration options.",
-	"execHandlerName": "ExecHandlerName is the name of the handler to use for executing commands in Docker containers.",
+	"":                        "DockerConfig holds Docker related configuration options.",
+	"execHandlerName":         "ExecHandlerName is the name of the handler to use for executing commands in Docker containers.",
+	"dockerShimSocket":        "DockerShimSocket is the location of the dockershim socket the kubelet uses.",
+	"dockerShimRootDirectory": "DockershimRootDirectory is the dockershim root directory.",
 }
 
 func (DockerConfig) SwaggerDoc() map[string]string {
@@ -255,6 +278,16 @@ var map_GrantConfig = map[string]string{
 
 func (GrantConfig) SwaggerDoc() map[string]string {
 	return map_GrantConfig
+}
+
+var map_GroupResource = map[string]string{
+	"":         "GroupResource points to a resource by its name and API group.",
+	"group":    "Group is the name of an API group",
+	"resource": "Resource is the name of a resource.",
+}
+
+func (GroupResource) SwaggerDoc() map[string]string {
+	return map_GroupResource
 }
 
 var map_HTPasswdPasswordIdentityProvider = map[string]string{
@@ -457,12 +490,13 @@ var map_MasterConfig = map[string]string{
 	"":                            "MasterConfig holds the necessary configuration options for the OpenShift master",
 	"servingInfo":                 "ServingInfo describes how to start serving",
 	"authConfig":                  "AuthConfig configures authentication options in addition to the standard oauth token and client certificate authenticators",
+	"aggregatorConfig":            "AggregatorConfig has options for configuring the aggregator component of the API server.",
 	"corsAllowedOrigins":          "CORSAllowedOrigins",
 	"apiLevels":                   "APILevels is a list of API levels that should be enabled on startup: v1 as examples",
 	"masterPublicURL":             "MasterPublicURL is how clients can access the OpenShift API server",
 	"controllers":                 "Controllers is a list of the controllers that should be started. If set to \"none\", no controllers will start automatically. The default value is \"*\" which will start all controllers. When using \"*\", you may exclude controllers by prepending a \"-\" in front of their name. No other values are recognized at this time.",
-	"pauseControllers":            "PauseControllers instructs the master to not automatically start controllers, but instead to wait until a notification to the server is received before launching them.",
-	"controllerLeaseTTL":          "ControllerLeaseTTL enables controller election, instructing the master to attempt to acquire a lease before controllers start and renewing it within a number of seconds defined by this value. Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or omitted) and controller election can be disabled with -1.",
+	"pauseControllers":            "PauseControllers instructs the master to not automatically start controllers, but instead to wait until a notification to the server is received before launching them. This field is ignored if controllerConfig.lockServiceName is specified. Deprecated: Will be removed in 3.7.",
+	"controllerLeaseTTL":          "ControllerLeaseTTL enables controller election against etcd, instructing the master to attempt to acquire a lease before controllers start and renewing it within a number of seconds defined by this value. Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or omitted) and controller election can be disabled with -1. This field is ignored if controllerConfig.lockServiceName is specified. Deprecated: use controllerConfig.lockServiceName to force leader election via config, and the\n  appropriate leader election flags in controllerArguments. Will be removed in 3.9.",
 	"admissionConfig":             "AdmissionConfig contains admission control plugin configuration.",
 	"controllerConfig":            "ControllerConfig holds configuration values for controllers",
 	"disabledFeatures":            "DisabledFeatures is a list of features that should not be started.  We omitempty here because its very unlikely that anyone will want to manually disable features and we don't want to encourage it.",
@@ -485,7 +519,7 @@ var map_MasterConfig = map[string]string{
 	"volumeConfig":                "MasterVolumeConfig contains options for configuring volume plugins in the master node.",
 	"jenkinsPipelineConfig":       "JenkinsPipelineConfig holds information about the default Jenkins template used for JenkinsPipeline build strategy.",
 	"auditConfig":                 "AuditConfig holds information related to auditing capabilities.",
-	"enableTemplateServiceBroker": "EnableTemplateServiceBroker is a temporary switch which enables TemplateServiceBroker.",
+	"templateServiceBrokerConfig": "TemplateServiceBrokerConfig holds information related to the template service broker.  The broker is enabled if TemplateServiceBrokerConfig is non-nil.",
 }
 
 func (MasterConfig) SwaggerDoc() map[string]string {
@@ -547,6 +581,7 @@ var map_NodeConfig = map[string]string{
 	"dnsIP":                           "DNSIP is the IP address that pods will use to access cluster DNS. Defaults to the service IP of the Kubernetes master. This IP must be listening on port 53 for compatibility with libc resolvers (which cannot be configured to resolve names from any other port). When running more complex local DNS configurations, this is often set to the local address of a DNS proxy like dnsmasq, which then will consult either the local DNS (see dnsBindAddress) or the master DNS.",
 	"dnsBindAddress":                  "DNSBindAddress is the ip:port to serve DNS on. If this is not set, the DNS server will not be started. Because most DNS resolvers will only listen on port 53, if you select an alternative port you will need a DNS proxy like dnsmasq to answer queries for containers. A common configuration is dnsmasq configured on a node IP listening on 53 and delegating queries for dnsDomain to this process, while sending other queries to the host environments nameservers.",
 	"dnsNameservers":                  "DNSNameservers is a list of ip:port values of recursive nameservers to forward queries to when running a local DNS server if dnsBindAddress is set. If this value is empty, the DNS server will default to the nameservers listed in /etc/resolv.conf. If you have configured dnsmasq or another DNS proxy on the system, this value should be set to the upstream nameservers dnsmasq resolves with.",
+	"dnsRecursiveResolvConf":          "DNSRecursiveResolvConf is a path to a resolv.conf file that contains settings for an upstream server. Only the nameservers and port fields are used. The file must exist and parse correctly. It adds extra nameservers to DNSNameservers if set.",
 	"networkPluginName":               "Deprecated and maintained for backward compatibility, use NetworkConfig.NetworkPluginName instead",
 	"networkConfig":                   "NetworkConfig provides network options for the node",
 	"volumeDirectory":                 "VolumeDirectory is the directory that volumes will be stored under",
@@ -856,6 +891,15 @@ var map_StringSourceSpec = map[string]string{
 
 func (StringSourceSpec) SwaggerDoc() map[string]string {
 	return map_StringSourceSpec
+}
+
+var map_TemplateServiceBrokerConfig = map[string]string{
+	"":                   "TemplateServiceBrokerConfig holds information related to the template service broker",
+	"templateNamespaces": "TemplateNamespaces indicates the namespace(s) in which the template service broker looks for templates to serve to the catalog.",
+}
+
+func (TemplateServiceBrokerConfig) SwaggerDoc() map[string]string {
+	return map_TemplateServiceBrokerConfig
 }
 
 var map_TokenConfig = map[string]string{

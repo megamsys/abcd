@@ -7,8 +7,7 @@ import (
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
-	kapi "k8s.io/kubernetes/pkg/api"
-	kapierrs "k8s.io/kubernetes/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	e2e "k8s.io/kubernetes/test/e2e/framework"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
@@ -34,10 +33,10 @@ USER 1001
 		oc.SetOutputDir(exutil.TestContext.OutputDir)
 	})
 
-	g.It("should succeed as an admin [Conformance]", func() {
+	g.It("should succeed [Conformance]", func() {
 		g.By("creating a build directly")
 		build, err := oc.AdminClient().Builds(oc.Namespace()).Create(&buildapi.Build{
-			ObjectMeta: kapi.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "optimized",
 			},
 			Spec: buildapi.BuildSpec{
@@ -60,7 +59,7 @@ USER 1001
 		o.Expect(err).NotTo(o.HaveOccurred())
 		o.Expect(result.BuildSuccess).To(o.BeTrue(), "Build did not succeed: %v", result)
 
-		pod, err := oc.KubeClient().Pods(oc.Namespace()).Get(build.Name + "-build")
+		pod, err := oc.KubeClient().CoreV1().Pods(oc.Namespace()).Get(build.Name+"-build", metav1.GetOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 		if strings.HasSuffix(pod.Spec.Containers[0].Image, ":v3.6.0-alpha.0") {
 			g.Skip(fmt.Sprintf("The currently selected builder image does not yet support optimized image builds: %s", pod.Spec.Containers[0].Image))
@@ -73,28 +72,5 @@ USER 1001
 		o.Expect(s).To(o.ContainSubstring("--> Committing changes to "))
 		o.Expect(s).To(o.ContainSubstring("Build complete, no image push requested"))
 		e2e.Logf("Build logs:\n%s", result)
-	})
-
-	g.It("should fail as a normal user [Conformance]", func() {
-		g.By("creating a build directly")
-		_, err := oc.Client().Builds(oc.Namespace()).Create(&buildapi.Build{
-			ObjectMeta: kapi.ObjectMeta{
-				Name: "optimized",
-			},
-			Spec: buildapi.BuildSpec{
-				CommonSpec: buildapi.CommonSpec{
-					Source: buildapi.BuildSource{
-						Dockerfile: &testDockerfile,
-					},
-					Strategy: buildapi.BuildStrategy{
-						DockerStrategy: &buildapi.DockerBuildStrategy{
-							ImageOptimizationPolicy: &skipLayers,
-						},
-					},
-				},
-			},
-		})
-		o.Expect(err).To(o.HaveOccurred())
-		o.Expect(kapierrs.IsForbidden(err)).To(o.BeTrue(), "Unexpected error: %v", err)
 	})
 })

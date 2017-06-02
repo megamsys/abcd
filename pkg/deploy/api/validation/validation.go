@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"strings"
 
+	unversionedvalidation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	kvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	kapi "k8s.io/kubernetes/pkg/api"
-	unversionedvalidation "k8s.io/kubernetes/pkg/api/unversioned/validation"
 	"k8s.io/kubernetes/pkg/api/validation"
 	kapivalidation "k8s.io/kubernetes/pkg/api/validation"
-	"k8s.io/kubernetes/pkg/util/intstr"
-	kvalidation "k8s.io/kubernetes/pkg/util/validation"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
 	imageapi "github.com/openshift/origin/pkg/image/api"
@@ -133,13 +133,12 @@ func handleEmptyImageReferences(template *kapi.PodTemplateSpec, triggers []deplo
 func ValidateDeploymentConfigStatus(status deployapi.DeploymentConfigStatus) field.ErrorList {
 	allErrs := field.ErrorList{}
 	statusPath := field.NewPath("status")
-	if status.LatestVersion < 0 {
-		allErrs = append(allErrs, field.Invalid(statusPath.Child("latestVersion"), status.LatestVersion, "latestVersion cannot be negative"))
-	}
-	if status.ObservedGeneration < int64(0) {
-		allErrs = append(allErrs, field.Invalid(statusPath.Child("observedGeneration"), status.ObservedGeneration, "observedGeneration cannot be negative"))
-	}
+	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.LatestVersion), statusPath.Child("latestVersion"))...)
+	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.ObservedGeneration), statusPath.Child("observedGeneration"))...)
+	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.Replicas), statusPath.Child("replicas"))...)
 	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.ReadyReplicas), statusPath.Child("readyReplicas"))...)
+	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.AvailableReplicas), statusPath.Child("availableReplicas"))...)
+	allErrs = append(allErrs, kapivalidation.ValidateNonnegativeField(int64(status.UnavailableReplicas), statusPath.Child("unavailableReplicas"))...)
 	return allErrs
 }
 

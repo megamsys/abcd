@@ -19,24 +19,21 @@
 #  - JUNIT_REPORT:        toggles the creation of jUnit XML from the test output and changes this script's output behavior
 #                         to use the 'junitreport' tool for summarizing the tests.
 #  - DLV_DEBUG            toggles running tests using delve debugger
-function exit_trap() {
-    local return_code=$?
+function cleanup() {
+    return_code=$?
+    os::cleanup::all "${return_code}"
 
-    end_time=$(date +%s)
-
-    if [[ "${return_code}" -eq "0" ]]; then
-        verb="succeeded"
-    else
-        verb="failed"
+    if [[ "${JUNIT_REPORT_NUM_FAILED:-}" == "0 failed" ]]; then
+        if [[ "${return_code}" -ne "0" ]]; then
+            os::log::warning "While the jUnit report found no failed tests, the \`go test\` process failed."
+            os::log::warning "This usually means that the unit test suite failed to compile."
+        fi
     fi
 
-    echo "$0 ${verb} after $(( end_time - start_time )) seconds"
     exit "${return_code}"
 }
+trap "cleanup" EXIT
 
-trap exit_trap EXIT
-
-start_time=$(date +%s)
 source "$(dirname "${BASH_SOURCE}")/lib/init.sh"
 os::build::setup_env
 os::cleanup::tmpdir
@@ -146,9 +143,10 @@ else
         # we need to find all of the kubernetes test suites, excluding those we directly whitelisted before, the end-to-end suite, and
         # the go2idl tests which we currently do not support
         # etcd3 isn't supported yet and that test flakes upstream
-        optional_kubernetes_packages="$(find "${kubernetes_path}" -not \(                             \
+        optional_kubernetes_packages="$(find -L vendor/k8s.io/{apimachinery,apiserver,client-go,kube-aggregator,kubernetes} -not \( \
           \(                                                                                          \
-            -path "${kubernetes_path}/pkg/api"                                                        \
+            -path "${kubernetes_path}/staging"                                                        \
+            -o -path "${kubernetes_path}/pkg/api"                                                     \
             -o -path "${kubernetes_path}/pkg/api/v1"                                                  \
             -o -path "${kubernetes_path}/test"                                                        \
             -o -path "${kubernetes_path}/cmd/libs/go2idl/client-gen/testoutput/testgroup/unversioned" \
@@ -174,39 +172,21 @@ fi
 # Run 'go test' with the accumulated arguments and packages:
 if [[ -n "${junit_report}" ]]; then
     # we need to generate jUnit xml
-    os::util::ensure::built_binary_exists 'junitreport'
 
     test_output_file="${LOG_DIR}/test-go.log"
+    export JUNIT_REPORT_OUTPUT="${test_output_file}"
     test_error_file="${LOG_DIR}/test-go-err.log"
-    junit_report_file="${ARTIFACT_DIR}/report.xml"
 
     os::log::info "Running \`go test\`..."
     # we don't care if the `go test` fails in this pipe, as we want to generate the report and summarize the output anyway
     set +o pipefail
 
     go test -i ${gotest_flags} ${test_packages}
-    go test ${gotest_flags} ${test_packages} 2>"${test_error_file}" \
-        | tee "${test_output_file}"                                 \
-        | junitreport --type gotest                                 \
-                      --suites nested                               \
-                      --roots github.com/openshift/origin           \
-                      --stream                                      \
-                      --output "${junit_report_file}"
+    go test ${gotest_flags} ${test_packages} 2>"${test_error_file}" | tee "${test_output_file}"
 
     test_return_code="${PIPESTATUS[0]}"
 
     set -o pipefail
-
-    echo
-    summary="$( junitreport summarize < "${junit_report_file}" )"
-    echo "${summary}"
-
-    if echo "${summary}" | grep -q ', 0 failed,'; then
-        if [[ "${test_return_code}" -ne "0" ]]; then
-            os::log::warning "While the jUnit report found no failed tests, the \`go test\` process failed."
-            os::log::warning "This usually means that the unit test suite failed to compile."
-        fi
-    fi
 
     if [[ -s "${test_error_file}" ]]; then
         os::log::warning "\`go test\` had the following output to stderr:"
@@ -224,8 +204,6 @@ if [[ -n "${junit_report}" ]]; then
         fi
     fi
 
-    os::log::info "Full output from \`go test\` logged at ${test_output_file}"
-    os::log::info "jUnit XML report placed at ${junit_report_file}"
     exit "${test_return_code}"
 
 elif [[ -n "${coverage_output_dir}" ]]; then

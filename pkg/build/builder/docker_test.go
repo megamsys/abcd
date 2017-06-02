@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fsouza/go-dockerclient"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
 	"github.com/openshift/source-to-image/pkg/tar"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/openshift/origin/pkg/build/api"
 	"github.com/openshift/origin/pkg/build/util/dockerfile"
+	"github.com/openshift/origin/pkg/client/testclient"
 	"github.com/openshift/origin/pkg/generate/git"
 )
 
@@ -293,6 +295,10 @@ func TestDockerfilePath(t *testing.T) {
 
 func TestEmptySource(t *testing.T) {
 	build := &api.Build{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "buildid",
+			Namespace: "default",
+		},
 		Spec: api.BuildSpec{
 			CommonSpec: api.CommonSpec{
 				Source: api.BuildSource{},
@@ -309,8 +315,11 @@ func TestEmptySource(t *testing.T) {
 		},
 	}
 
+	client := testclient.Fake{}
+
 	dockerBuilder := &DockerBuilder{
-		build: build,
+		client: client.Builds(""),
+		build:  build,
 	}
 
 	if err := dockerBuilder.Build(); err == nil {
@@ -340,6 +349,10 @@ USER 1001`
 	}
 
 	build := &api.Build{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "buildid",
+			Namespace: "default",
+		},
 		Spec: api.BuildSpec{
 			CommonSpec: api.CommonSpec{
 				Source: api.BuildSource{
@@ -365,7 +378,10 @@ USER 1001`
 		},
 	}
 
+	client := testclient.Fake{}
+
 	dockerBuilder := &DockerBuilder{
+		client:       client.Builds(""),
 		build:        build,
 		dockerClient: dockerClient,
 		gitClient:    git.NewRepository(),

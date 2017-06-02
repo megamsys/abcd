@@ -9,18 +9,20 @@ import (
 
 	"github.com/golang/glog"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/cache"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/credentialprovider"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/util/workqueue"
-	"k8s.io/kubernetes/pkg/watch"
 )
 
 // DockerRegistryServiceControllerOptions contains options for the DockerRegistryServiceController
@@ -34,12 +36,12 @@ type DockerRegistryServiceControllerOptions struct {
 
 	DockercfgController *DockercfgController
 
-	// DockerURLsIntialized is used to send a signal to the DockercfgController that it has the correct set of docker urls
-	DockerURLsIntialized chan struct{}
+	// DockerURLsInitialized is used to send a signal to the DockercfgController that it has the correct set of docker urls
+	DockerURLsInitialized chan struct{}
 }
 
 // NewDockerRegistryServiceController returns a new *DockerRegistryServiceController.
-func NewDockerRegistryServiceController(cl kclientset.Interface, options DockerRegistryServiceControllerOptions) *DockerRegistryServiceController {
+func NewDockerRegistryServiceController(secrets informers.SecretInformer, cl kclientset.Interface, options DockerRegistryServiceControllerOptions) *DockerRegistryServiceController {
 	e := &DockerRegistryServiceController{
 		client:                cl,
 		dockercfgController:   options.DockercfgController,
@@ -47,17 +49,18 @@ func NewDockerRegistryServiceController(cl kclientset.Interface, options DockerR
 		secretsToUpdate:       workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
 		serviceName:           options.RegistryServiceName,
 		serviceNamespace:      options.RegistryNamespace,
-		dockerURLsIntialized:  options.DockerURLsIntialized,
+		dockerURLsInitialized: options.DockerURLsInitialized,
 	}
 
+	// does not use shared informers because we're only watching one item
 	e.serviceCache, e.serviceController = cache.NewInformer(
 		&cache.ListWatch{
-			ListFunc: func(opts kapi.ListOptions) (runtime.Object, error) {
-				opts.FieldSelector = fields.OneTermEqualSelector("metadata.name", options.RegistryServiceName)
+			ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
+				opts.FieldSelector = fields.OneTermEqualSelector("metadata.name", options.RegistryServiceName).String()
 				return e.client.Core().Services(options.RegistryNamespace).List(opts)
 			},
-			WatchFunc: func(opts kapi.ListOptions) (watch.Interface, error) {
-				opts.FieldSelector = fields.OneTermEqualSelector("metadata.name", options.RegistryServiceName)
+			WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
+				opts.FieldSelector = fields.OneTermEqualSelector("metadata.name", options.RegistryServiceName).String()
 				return e.client.Core().Services(options.RegistryNamespace).Watch(opts)
 			},
 		},
@@ -78,21 +81,8 @@ func NewDockerRegistryServiceController(cl kclientset.Interface, options DockerR
 	e.servicesSynced = e.serviceController.HasSynced
 	e.syncRegistryLocationHandler = e.syncRegistryLocationChange
 
-	dockercfgOptions := kapi.ListOptions{FieldSelector: fields.SelectorFromSet(map[string]string{kapi.SecretTypeField: string(kapi.SecretTypeDockercfg)})}
-	e.secretCache, e.secretController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(opts kapi.ListOptions) (runtime.Object, error) {
-				return e.client.Core().Secrets(kapi.NamespaceAll).List(dockercfgOptions)
-			},
-			WatchFunc: func(opts kapi.ListOptions) (watch.Interface, error) {
-				return e.client.Core().Secrets(kapi.NamespaceAll).Watch(dockercfgOptions)
-			},
-		},
-		&kapi.Secret{},
-		options.Resync,
-		cache.ResourceEventHandlerFuncs{},
-	)
-	e.secretsSynced = e.secretController.HasSynced
+	e.secretCache = secrets.Informer().GetIndexer()
+	e.secretsSynced = secrets.Informer().GetController().HasSynced
 	e.syncSecretHandler = e.syncSecretUpdate
 
 	return e
@@ -107,12 +97,11 @@ type DockerRegistryServiceController struct {
 
 	dockercfgController *DockercfgController
 
-	serviceController           *cache.Controller
+	serviceController           cache.Controller
 	serviceCache                cache.Store
 	servicesSynced              func() bool
 	syncRegistryLocationHandler func(key string) error
 
-	secretController  *cache.Controller
 	secretCache       cache.Store
 	secretsSynced     func() bool
 	syncSecretHandler func(key string) error
@@ -122,15 +111,15 @@ type DockerRegistryServiceController struct {
 	registryLocationQueue workqueue.RateLimitingInterface
 	secretsToUpdate       workqueue.RateLimitingInterface
 
-	dockerURLsIntialized chan struct{}
+	dockerURLsInitialized chan struct{}
 }
 
 // Runs controller loops and returns immediately
 func (e *DockerRegistryServiceController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
+	defer e.registryLocationQueue.ShutDown()
 
 	go e.serviceController.Run(stopCh)
-	go e.secretController.Run(stopCh)
 
 	// Wait for the store to sync before starting any work in this controller.
 	ready := make(chan struct{})
@@ -141,14 +130,13 @@ func (e *DockerRegistryServiceController) Run(workers int, stopCh <-chan struct{
 		return
 	}
 
+	glog.V(5).Infof("Starting workers")
 	go wait.Until(e.watchForDockerURLChanges, time.Second, stopCh)
 	for i := 0; i < workers; i++ {
 		go wait.Until(e.watchForDockercfgSecretUpdates, time.Second, stopCh)
 	}
-
 	<-stopCh
-	glog.Infof("Shutting down docker registry service controller")
-	e.registryLocationQueue.ShutDown()
+	glog.V(1).Infof("Shutting down")
 }
 
 // enqueue adds to our queue.  We only have one entry, but we never have to check it since we already know the things
@@ -163,13 +151,9 @@ func (e *DockerRegistryServiceController) enqueueRegistryLocationQueue() {
 func (e *DockerRegistryServiceController) waitForDockerURLs(ready chan<- struct{}, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 
-	for !e.servicesSynced() || !e.secretsSynced() {
-		// wait for the initialization to complete to be informed of a stop
-		select {
-		case <-time.After(100 * time.Millisecond):
-		case <-stopCh:
-			return
-		}
+	// Wait for the stores to fill
+	if !cache.WaitForCacheSync(stopCh, e.servicesSynced, e.secretsSynced) {
+		return
 	}
 
 	// after syncing, determine the current state and assume that we're up to date for it if you don't do this,
@@ -177,7 +161,7 @@ func (e *DockerRegistryServiceController) waitForDockerURLs(ready chan<- struct{
 	urls := e.getDockerRegistryLocations()
 	e.setRegistryURLs(urls...)
 	e.dockercfgController.SetDockerURLs(urls...)
-	close(e.dockerURLsIntialized)
+	close(e.dockerURLsInitialized)
 	close(ready)
 
 	return
@@ -228,7 +212,7 @@ func (e *DockerRegistryServiceController) watchForDockerURLChanges() {
 
 // getDockerRegistryLocations returns the dns form and the ip form of the secret
 func (e *DockerRegistryServiceController) getDockerRegistryLocations() []string {
-	key, err := controller.KeyFunc(&kapi.Service{ObjectMeta: kapi.ObjectMeta{Name: e.serviceName, Namespace: e.serviceNamespace}})
+	key, err := controller.KeyFunc(&kapi.Service{ObjectMeta: metav1.ObjectMeta{Name: e.serviceName, Namespace: e.serviceNamespace}})
 	if err != nil {
 		return []string{}
 	}
@@ -268,9 +252,18 @@ func (e *DockerRegistryServiceController) syncRegistryLocationChange(key string)
 	// we've changed the docker registry URL.  Add items to the work queue for all known secrets
 	// new secrets will already get the updated value.
 	for _, obj := range e.secretCache.List() {
+		switch t := obj.(type) {
+		case *kapi.Secret:
+			if t.Type != kapi.SecretTypeDockercfg {
+				continue
+			}
+		default:
+			utilruntime.HandleError(fmt.Errorf("object passed to %T that is not expected: %T", e, obj))
+			continue
+		}
 		key, err := controller.KeyFunc(obj)
 		if err != nil {
-			glog.Errorf("Couldn't get key for object %+v: %v", obj, err)
+			utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", obj, err))
 			continue
 		}
 		e.secretsToUpdate.Add(key)

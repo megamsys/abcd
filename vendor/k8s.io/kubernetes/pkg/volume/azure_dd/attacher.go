@@ -26,12 +26,12 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/arm/compute"
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/cloudprovider"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/keymutex"
 	"k8s.io/kubernetes/pkg/util/mount"
-	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
 )
@@ -171,6 +171,10 @@ func (attacher *azureDiskAttacher) WaitForAttach(spec *volume.Spec, lunStr strin
 	err = wait.Poll(checkSleepDuration, timeout, func() (bool, error) {
 		glog.V(4).Infof("Checking Azure disk %q(lun %s) is attached.", volumeSource.DiskName, lunStr)
 		if devicePath, err = findDiskByLun(lun, &osIOHandler{}, exe); err == nil {
+			if len(devicePath) == 0 {
+				glog.Warningf("cannot find attached Azure disk %q(lun %s) locally.", volumeSource.DiskName, lunStr)
+				return false, fmt.Errorf("cannot find attached Azure disk %q(lun %s) locally.", volumeSource.DiskName, lunStr)
+			}
 			glog.V(4).Infof("Successfully found attached Azure disk %q(lun %s, device path %s).", volumeSource.DiskName, lunStr, devicePath)
 			return true, nil
 		} else {
@@ -218,7 +222,8 @@ func (attacher *azureDiskAttacher) MountDevice(spec *volume.Spec, devicePath str
 	}
 	if notMnt {
 		diskMounter := &mount.SafeFormatAndMount{Interface: mounter, Runner: exec.New()}
-		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, *volumeSource.FSType, options)
+		mountOptions := volume.MountOptionFromSpec(spec, options...)
+		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, *volumeSource.FSType, mountOptions)
 		if err != nil {
 			os.Remove(deviceMountPath)
 			return err
