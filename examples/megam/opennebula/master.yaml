@@ -23,11 +23,11 @@ message: |-
 
          Username: ${ONE_USER}
          Password:
-   Connection URL: http://${ONE_SERVICE_NAME}:5432/
+   Connection URL: http://${ONE_SERVICE_NAME}:9869/
 
   For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
 labels:
-  template: opennebula-ephemeral-template
+  template: opennebula-ephemeral-template1
 objects:
 - kind: Service
   apiVersion: v1
@@ -37,10 +37,9 @@ objects:
   spec:
     ports:
     - name: onemaster
-      protocol: TCP
       port: 9869
       targetPort: 9869
-      nodePort: 0
+    protocol: TCP
     selector:
       name: "${ONE_SERVICE_NAME}"
     type: ClusterIP
@@ -53,20 +52,7 @@ objects:
     name: "${ONE_SERVICE_NAME}"
     creationTimestamp:
   spec:
-    strategy:
-      type: Recreate
-    triggers:
-    - type: ImageChange
-      imageChangeParams:
-        automatic: true
-        containerNames:
-        - megamio/docker_onemaster
-        from:
-          kind: ImageStreamTag
-          name: megamio/docker_onemaster:${ONE_VERSION}
-          namespace: "${NAMESPACE}"
-        lastTriggeredImage: ''
-    - type: ConfigChange
+    restartPolicy: Never
     replicas: 1
     selector:
       name: "${ONE_SERVICE_NAME}"
@@ -77,51 +63,27 @@ objects:
           name: "${ONE_SERVICE_NAME}"
       spec:
         containers:
-        - name: megamio/docker_onemaster
-          image: " "
-          ports:
-          - containerPort: 9869
-            protocol: HTTP
-          readinessProbe:
-            timeoutSeconds: 1
-            initialDelaySeconds: 5
-            exec:
-              command:
-              - "/bin/sh"
-              - "-i"
-              - "-c"
-              - psql -h 127.0.0.1 -U $ONE_USER -q -d $POSTGRESQL_DATABASE -c
-                'SELECT 1'
-          livenessProbe:
-            timeoutSeconds: 1
-            initialDelaySeconds: 30
-            tcpSocket:
-              port: 5432
+        - name: onemaster
+          image: "megamio/docker_onemaster:latest"
+          imagePullPolicy: "IfNotPresent"
           env:
-          - name: ONE_USER
+          - name: ssh_private
             valueFrom:
               secretKeyRef:
-                name: "${ONE_SERVICE_NAME}"
-                key: one-user
+                name: ssh
+                key: ssh-privatekey
+          - name: ssh_public
+            valueFrom:
+              secretKeyRef:
+                name: ssh
+                key: ssh-publickey
+          ports:
+          - containerPort: 9869
+            protocol: TCP
           resources:
             limits:
               memory: "${MEMORY_LIMIT}"
-          volumeMounts:
-          - name: "${ONE_SERVICE_NAME}-data"
-            mountPath: "/var/lib/pgsql/data"
-          terminationMessagePath: "/dev/termination-log"
-          imagePullPolicy: IfNotPresent
-          capabilities: {}
-          securityContext:
-            capabilities: {}
-            privileged: false
-        volumes:
-        - name: "${ONE_SERVICE_NAME}-data"
-          emptyDir:
-            medium: ''
-        restartPolicy: Always
-        dnsPolicy: ClusterFirst
-  status: {}
+          status: {}
 parameters:
 - name: MEMORY_LIMIT
   displayName: Memory Limit
