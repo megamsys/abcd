@@ -1,0 +1,95 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: ubuntu
+  annotations:
+    openshift.io/display-name: Ubuntu
+    description: |-
+      Ubuntu is a Debian-based Linux operating system. Xenial Xerus is the Ubuntu codename for version 16.04 LTS of the Ubuntu Linux-based operating system., see http://www.ubuntu.com/server.
+
+      WARNING: Any data stored will be lost upon pod destruction.
+    iconClass: icon-machine
+    tags: torpeto,ubuntu
+    template.openshift.io/long-description: This template provides a standalone OpenNebula
+      master server with a database created.  The database is not stored on persistent storage,
+      so any restart of the service will result in all data being lost.
+    template.openshift.io/provider-display-name: Megam Systems.
+    template.openshift.io/documentation-url: https://docs.megam.io
+    template.openshift.io/support-url: https://github.com/megamsys/support
+    template.openshift.io/url: http://www.ubuntu.com/server
+    template.openshift.io/provided_by:  vertice
+    template.openshift.io/image: ubuntu.png
+    template.openshift.io/cattype: TORPEDO
+    template.openshift.io/catorder: 1
+    template.openshift.io/os: ubuntu
+
+message: |-
+  The following service(s) have been created in your project: ${ONE_SERVICE_NAME}.
+
+         Username: ${ONE_USER}
+         Password: ${ONE_PASSWORD}
+   Connection URL: http://${ONE_SERVICE_NAME}:9869/
+
+  For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
+labels:
+  template: ubuntu
+objects:
+- kind: Pod
+  apiVersion: v1
+  metadata:
+    name: "${TORPEDO_NAME}"
+    annotations:
+      kubernetes.io/target-runtime: virtlet
+  spec:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: extraRuntime
+              operator: In
+              values:
+              - virtlet
+    containers:
+    - name: "${TORPEDO_NAME}"
+      image: "${IMAGE_NAME}-${VERSION}"
+    volumes:
+    - name: test
+      flexVolume:
+        driver: "virtlet/flexvolume_driver"
+        options:
+          type: nocloud
+          metadata: |
+            instance-id: "${VM_ID}"
+            local-hostname: "${TORPEDO_NAME}-${DOMAIN}"
+          userdata: |
+            #cloud-config
+            users:
+            - name: root
+              ssh-authorized-keys:
+              - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCaJEcFDXEK2ZbX0ZLS1EIYFZRbDAcRfuVjpstSc0De8+sV1aiu+dePxdkuDRwqFtCyk6dEZkssjOkBXtri00MECLkir6FcH3kKOJtbJ6vy3uaJc9w1ERo+wyl6SkAh/+JTJkp7QRXj8oylW5E20LsbnA/dIwWzAF51PPwF7A7FtNg9DnwPqMkxFo1Th/buOMKbP5ZA1mmNNtmzbMpMfJATvVyiv3ccsSJKOiyQr6UG+j7sc/7jMVz5Xk34Vd0l8GwcB0334MchHckmqDB142h/NCWTr8oLakDNvkfC1YneAfAO41hDkUbxPtVBG5M/o7P4fxoqiHEX+ZLfRxDtHB53 me@localhost
+            ssh_pwauth: True
+parameters:
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Maximum amount of memory the container can use.
+  value: 512Mi
+  required: true
+- name: VERSION
+  displayName: Version of Ubuntu
+  description: Version of Ubuntu image to be used (16.04).
+  value: '16.04'
+- name: IMAGE_NAME
+  displayName: Ubuntu_Xenial
+  description: Image name that is stored in image store server.
+  value: 'virtlet/cloud-images.ubuntu.com/xenial/current/xenial-server'
+- name: TORPEDO_NAME
+  description: Name of instance.
+  value: 'blue-sky-5624'
+- name: DOMAIN
+  description: domain name of instance.
+  value: 'megambox.com'
+- name: VM_ID
+  description: Unique id for instance.
+  value: '1235-254'
