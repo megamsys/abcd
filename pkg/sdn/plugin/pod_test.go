@@ -12,15 +12,13 @@ import (
 
 	"github.com/openshift/origin/pkg/sdn/plugin/cniserver"
 
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-
-	kapi "k8s.io/kubernetes/pkg/api"
-	kunversioned "k8s.io/kubernetes/pkg/api/unversioned"
+	utiltesting "k8s.io/client-go/util/testing"
+	kapiv1 "k8s.io/kubernetes/pkg/api/v1"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	kcontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	kcontainertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	"k8s.io/kubernetes/pkg/kubelet/network"
 	khostport "k8s.io/kubernetes/pkg/kubelet/network/hostport"
-	utiltesting "k8s.io/kubernetes/pkg/util/testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 )
@@ -100,28 +98,13 @@ func (pt *podTester) addExpectedPod(t *testing.T, op *operation) {
 }
 
 func fakeRunningPod(namespace, name string, ip net.IP) *runningPod {
-	activePod := &khostport.ActivePod{
-		Pod: &kapi.Pod{
-			TypeMeta: kunversioned.TypeMeta{
-				Kind: "Pod",
-			},
-			ObjectMeta: kapi.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-			},
-			Spec: kapi.PodSpec{
-				Containers: []kapi.Container{
-					{
-						Name:  "foobareasadfa",
-						Image: "awesome-image",
-					},
-				},
-			},
-		},
-		IP: ip,
+	podPortMapping := &khostport.PodPortMapping{
+		Namespace: namespace,
+		Name:      name,
+		IP:        ip,
 	}
 
-	return &runningPod{activePod: activePod, vnid: 0}
+	return &runningPod{podPortMapping: podPortMapping, vnid: 0}
 }
 
 func (pt *podTester) setup(req *cniserver.PodRequest) (*cnitypes.Result, *runningPod, error) {
@@ -177,7 +160,7 @@ func newFakeHost() *fakeHost {
 	}
 }
 
-func (fnh *fakeHost) GetPodByName(name, namespace string) (*kapi.Pod, bool) {
+func (fnh *fakeHost) GetPodByName(name, namespace string) (*kapiv1.Pod, bool) {
 	return nil, false
 }
 
@@ -191,6 +174,10 @@ func (fnh *fakeHost) GetRuntime() kcontainer.Runtime {
 
 func (fnh *fakeHost) GetNetNS(containerID string) (string, error) {
 	return "", nil
+}
+
+func (fnh *fakeHost) GetPodPortMappings(containerID string) ([]*khostport.PortMapping, error) {
+	return nil, nil
 }
 
 func (fnh *fakeHost) SupportsLegacyFeatures() bool {
@@ -368,9 +355,10 @@ func TestPodManager(t *testing.T) {
 
 	for k, tc := range testcases {
 		podTester := newPodTester(t, k, socketPath)
-		podManager := newDefaultPodManager(newFakeHost())
+		podManager := newDefaultPodManager()
 		podManager.podHandler = podTester
-		podManager.Start(socketPath)
+		_, net, _ := net.ParseCIDR("1.2.0.0/16")
+		podManager.Start(socketPath, newFakeHost(), "1.2.3.0/24", net)
 
 		// Add pods to our expected pod list before kicking off the
 		// actual pod setup to ensure we don't concurrently access
@@ -463,9 +451,10 @@ func TestDirectPodUpdate(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "cni-server.sock")
 
 	podTester := newPodTester(t, "update", socketPath)
-	podManager := newDefaultPodManager(newFakeHost())
+	podManager := newDefaultPodManager()
 	podManager.podHandler = podTester
-	podManager.Start(socketPath)
+	_, net, _ := net.ParseCIDR("1.2.0.0/16")
+	podManager.Start(socketPath, newFakeHost(), "1.2.3.0/24", net)
 
 	op := &operation{
 		command:   cniserver.CNI_UPDATE,

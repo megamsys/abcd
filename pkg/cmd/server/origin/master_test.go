@@ -6,13 +6,13 @@ import (
 
 	"github.com/emicklei/go-restful"
 
-	"k8s.io/kubernetes/pkg/genericapiserver/mux"
+	"k8s.io/apiserver/pkg/server/mux"
 
 	"github.com/openshift/origin/pkg/cmd/server/api"
 )
 
 func TestInitializeOpenshiftAPIVersionRouteHandler(t *testing.T) {
-	apiContainer := mux.NewAPIContainer(http.NewServeMux(), api.Codecs)
+	apiContainer := mux.NewAPIContainer(http.NewServeMux(), api.Codecs, mux.NewPathRecorderMux())
 	initAPIVersionRoute(apiContainer, "oapi", "v1")
 
 	wss := apiContainer.RegisteredWebServices()

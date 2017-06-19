@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/docker/distribution/manifest/schema2"
@@ -12,11 +13,11 @@ import (
 	"github.com/golang/glog"
 	gonum "github.com/gonum/graph"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	kerrors "k8s.io/kubernetes/pkg/util/errors"
-	"k8s.io/kubernetes/pkg/util/sets"
 
 	"github.com/openshift/origin/pkg/api/graph"
 	kubegraph "github.com/openshift/origin/pkg/api/kubegraph/nodes"
@@ -28,6 +29,7 @@ import (
 	deploygraph "github.com/openshift/origin/pkg/deploy/graph/nodes"
 	imageapi "github.com/openshift/origin/pkg/image/api"
 	imagegraph "github.com/openshift/origin/pkg/image/graph/nodes"
+	"github.com/openshift/origin/pkg/util/netutils"
 )
 
 // TODO these edges should probably have an `Add***Edges` method in images/graph and be moved there
@@ -139,6 +141,8 @@ type PrunerOptions struct {
 	RegistryClient *http.Client
 	// RegistryURL is the URL for the registry.
 	RegistryURL string
+	// Allow a fallback to insecure transport when contacting the registry.
+	Insecure bool
 }
 
 // Pruner knows how to prune istags, images, layers and image configs.
@@ -169,7 +173,8 @@ type registryPinger interface {
 
 // defaultRegistryPinger implements registryPinger.
 type defaultRegistryPinger struct {
-	client *http.Client
+	client   *http.Client
+	insecure bool
 }
 
 func (drp *defaultRegistryPinger) ping(registry string) error {
@@ -182,23 +187,29 @@ func (drp *defaultRegistryPinger) ping(registry string) error {
 		defer healthResponse.Body.Close()
 
 		if healthResponse.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code %d", healthResponse.StatusCode)
+			return fmt.Errorf("unexpected status: %s", healthResponse.Status)
 		}
 
 		return nil
 	}
 
-	var err error
-	for _, proto := range []string{"https", "http"} {
+	var errs []error
+	protos := make([]string, 0, 2)
+	protos = append(protos, "https")
+	if drp.insecure || netutils.IsPrivateAddress(registry) {
+		protos = append(protos, "http")
+	}
+	for _, proto := range protos {
 		glog.V(4).Infof("Trying %s for %s", proto, registry)
-		err = healthCheck(proto, registry)
+		err := healthCheck(proto, registry)
 		if err == nil {
-			break
+			return nil
 		}
+		errs = append(errs, err)
 		glog.V(4).Infof("Error with %s for %s: %v", proto, registry, err)
 	}
 
-	return err
+	return kerrors.NewAggregate(errs)
 }
 
 // dryRunRegistryPinger implements registryPinger.
@@ -267,6 +278,7 @@ func NewPruner(options PrunerOptions) Pruner {
 	if options.PruneOverSizeLimit != nil {
 		algorithm.pruneOverSizeLimit = *options.PruneOverSizeLimit
 	}
+	algorithm.allImages = true
 	if options.AllImages != nil {
 		algorithm.allImages = *options.AllImages
 	}
@@ -285,7 +297,10 @@ func NewPruner(options PrunerOptions) Pruner {
 	if options.DryRun {
 		rp = &dryRunRegistryPinger{}
 	} else {
-		rp = &defaultRegistryPinger{options.RegistryClient}
+		rp = &defaultRegistryPinger{
+			client:   options.RegistryClient,
+			insecure: options.Insecure,
+		}
 	}
 
 	return &pruner{
@@ -321,7 +336,7 @@ func addImagesToGraph(g graph.Graph, images *imageapi.ImageList, algorithm prune
 			}
 		}
 
-		age := unversioned.Now().Sub(image.CreationTimestamp.Time)
+		age := metav1.Now().Sub(image.CreationTimestamp.Time)
 		if !algorithm.pruneOverSizeLimit && age < algorithm.keepYoungerThan {
 			glog.V(4).Infof("Image %q is younger than minimum pruning age, skipping (age=%v)", image.Name, age)
 			continue
@@ -367,7 +382,7 @@ func addImageStreamsToGraph(g graph.Graph, streams *imageapi.ImageStreamList, li
 		// use a weak reference for old image revisions by default
 		oldImageRevisionReferenceKind := WeakReferencedImageEdgeKind
 
-		age := unversioned.Now().Sub(stream.CreationTimestamp.Time)
+		age := metav1.Now().Sub(stream.CreationTimestamp.Time)
 		if !algorithm.pruneOverSizeLimit && age < algorithm.keepYoungerThan {
 			// stream's age is below threshold - use a strong reference for old image revisions instead
 			oldImageRevisionReferenceKind = ReferencedImageEdgeKind
@@ -479,7 +494,7 @@ func addPodsToGraph(g graph.Graph, pods *kapi.PodList, algorithm pruneAlgorithm)
 		glog.V(4).Infof("Examining pod %s/%s", pod.Namespace, pod.Name)
 
 		if pod.Status.Phase != kapi.PodRunning && pod.Status.Phase != kapi.PodPending {
-			age := unversioned.Now().Sub(pod.CreationTimestamp.Time)
+			age := metav1.Now().Sub(pod.CreationTimestamp.Time)
 			if age >= algorithm.keepYoungerThan {
 				glog.V(4).Infof("Pod %s/%s is not running or pending and age is at least minimum pruning age - skipping", pod.Namespace, pod.Name)
 				// not pending or running, age is at least minimum pruning age, skip
@@ -629,6 +644,17 @@ func getImageNodes(nodes []gonum.Node) []*imagegraph.ImageNode {
 	ret := []*imagegraph.ImageNode{}
 	for i := range nodes {
 		if node, ok := nodes[i].(*imagegraph.ImageNode); ok {
+			ret = append(ret, node)
+		}
+	}
+	return ret
+}
+
+// getImageStreamNodes returns only nodes of type ImageStreamNode.
+func getImageStreamNodes(nodes []gonum.Node) []*imagegraph.ImageStreamNode {
+	ret := []*imagegraph.ImageStreamNode{}
+	for i := range nodes {
+		if node, ok := nodes[i].(*imagegraph.ImageStreamNode); ok {
 			ret = append(ret, node)
 		}
 	}
@@ -787,14 +813,60 @@ func pruneImages(g graph.Graph, imageNodes []*imagegraph.ImageNode, imagePruner 
 	return errs
 }
 
-func (p *pruner) determineRegistry(imageNodes []*imagegraph.ImageNode) (string, error) {
+// order younger images before older
+type imgByAge []*imageapi.Image
+
+func (ba imgByAge) Len() int      { return len(ba) }
+func (ba imgByAge) Swap(i, j int) { ba[i], ba[j] = ba[j], ba[i] }
+func (ba imgByAge) Less(i, j int) bool {
+	return ba[i].CreationTimestamp.After(ba[j].CreationTimestamp.Time)
+}
+
+// order younger image stream before older
+type isByAge []*imagegraph.ImageStreamNode
+
+func (ba isByAge) Len() int      { return len(ba) }
+func (ba isByAge) Swap(i, j int) { ba[i], ba[j] = ba[j], ba[i] }
+func (ba isByAge) Less(i, j int) bool {
+	return ba[i].ImageStream.CreationTimestamp.After(ba[j].ImageStream.CreationTimestamp.Time)
+}
+
+func (p *pruner) determineRegistry(imageNodes []*imagegraph.ImageNode, isNodes []*imagegraph.ImageStreamNode) (string, error) {
 	if len(p.registryURL) > 0 {
 		return p.registryURL, nil
 	}
 
-	// we only support a single internal registry, and all images have the same registry
-	// so we just take the 1st one and use it
-	pullSpec := imageNodes[0].Image.DockerImageReference
+	var pullSpec string
+	var managedImages []*imageapi.Image
+
+	// 1st try to determine registry url from a pull spec of the youngest managed image
+	for _, node := range imageNodes {
+		if node.Image.Annotations[imageapi.ManagedByOpenShiftAnnotation] != "true" {
+			continue
+		}
+		managedImages = append(managedImages, node.Image)
+	}
+	// be sure to pick up the newest managed image which should have an up to date information
+	sort.Sort(imgByAge(managedImages))
+
+	if len(managedImages) > 0 {
+		pullSpec = managedImages[0].DockerImageReference
+	} else {
+		// 2nd try to get the pull spec from any image stream
+		// Sorting by creation timestamp may not get us up to date info. Modification time would be much
+		// better if there were such an attribute.
+		sort.Sort(isByAge(isNodes))
+		for _, node := range isNodes {
+			if len(node.ImageStream.Status.DockerImageRepository) == 0 {
+				continue
+			}
+			pullSpec = node.ImageStream.Status.DockerImageRepository
+		}
+	}
+
+	if len(pullSpec) == 0 {
+		return "", fmt.Errorf("no managed image found")
+	}
 
 	ref, err := imageapi.ParseDockerImageReference(pullSpec)
 	if err != nil {
@@ -825,7 +897,7 @@ func (p *pruner) Prune(
 		return nil
 	}
 
-	registryURL, err := p.determineRegistry(imageNodes)
+	registryURL, err := p.determineRegistry(imageNodes, getImageStreamNodes(allNodes))
 	if err != nil {
 		return fmt.Errorf("unable to determine registry: %v", err)
 	}

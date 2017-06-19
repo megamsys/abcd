@@ -10,14 +10,15 @@ os::cleanup::tmpdir
 os::util::environment::setup_all_server_vars
 
 function cleanup() {
-	out=$?
-	set +e
+	return_code=$?
 
-	echo "Complete"
-	exit $out
+	# this is a domain socket. CI falls over it.
+	rm -f "${BASETMPDIR}/dockershim.sock"
+
+	os::cleanup::all "${return_code}"
+	exit "${return_code}"
 }
-
-trap cleanup EXIT SIGINT
+trap "cleanup" EXIT
 
 export GOMAXPROCS="$(grep "processor" -c /proc/cpuinfo 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || 1)"
 
@@ -26,6 +27,12 @@ package="${OS_TEST_PACKAGE:-test/integration}"
 name="$(basename ${package})"
 dlv_debug="${DLV_DEBUG:-}"
 verbose="${VERBOSE:-}"
+junit_report="${JUNIT_REPORT:-}"
+
+if [[ -n "${JUNIT_REPORT:-}" ]]; then
+	export JUNIT_REPORT_OUTPUT="${LOG_DIR}/raw_test_output.log"
+	rm -rf "${JUNIT_REPORT_OUTPUT}"
+fi
 
 # CGO must be disabled in order to debug
 if [[ -n "${dlv_debug}" ]]; then
@@ -57,6 +64,10 @@ function exectest() {
 	elif [[ -n "${verbose}" ]]; then
 		# run tests with extra verbosity
 		out=$("${testexec}" -vmodule=*=5 -test.v -test.timeout=4m -test.run="^$1$" "${@:2}" 2>&1)
+		result=$?
+	elif [[ -n "${junit_report}" ]]; then
+		# run tests and generate jUnit xml
+		out=$("${testexec}" -test.v -test.timeout=4m -test.run="^$1$" "${@:2}" 2>&1 | tee -a "${JUNIT_REPORT_OUTPUT}" )
 		result=$?
 	else
 		# run tests normally
@@ -93,16 +104,25 @@ loop="${TIMES:-1}"
 # hack/test-integration.sh Template*
 # hack/test-integration.sh "(WatchBuilds|Template)"
 tests=( $(go run "${OS_ROOT}/hack/listtests.go" -prefix="${OS_GO_PACKAGE}/${package}.Test" "${testexec}" | grep -E "${1-Test}") )
+
 # run each test as its own process
 ret=0
+test_result="ok"
 pushd "${OS_ROOT}/${package}" &>/dev/null
+test_start_time=$(date +%s%3N)
 for test in "${tests[@]}"; do
 	for((i=0;i<${loop};i+=1)); do
 		if ! (exectest "${test}" ${@:2}); then
 			ret=1
+			test_result="FAIL"
 		fi
 	done
 done
+test_end_time=$(date +%s%3N)
+test_duration=$((test_end_time - test_start_time))
+
+echo "${test_result}        github.com/openshift/origin/test/integration    $((test_duration / 1000)).$((test_duration % 1000))s" >> "${JUNIT_REPORT_OUTPUT:-/dev/null}"
+
 popd &>/dev/null
 
-ENDTIME=$(date +%s); echo "$0 took $(($ENDTIME - $STARTTIME)) seconds"; exit "$ret"
+ENDTIME=$(date +%s); echo "$0 took $((ENDTIME - STARTTIME)) seconds"; exit "$ret"

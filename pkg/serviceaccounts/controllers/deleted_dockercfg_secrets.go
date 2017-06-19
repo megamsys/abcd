@@ -6,15 +6,14 @@ import (
 
 	"github.com/golang/glog"
 
+	kapierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/api"
-	kapierrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/cache"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
+	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core/internalversion"
 )
 
 // NumServiceAccountUpdateRetries controls the number of times we will retry on conflict errors.
@@ -29,28 +28,28 @@ type DockercfgDeletedControllerOptions struct {
 }
 
 // NewDockercfgDeletedController returns a new *DockercfgDeletedController.
-func NewDockercfgDeletedController(cl kclientset.Interface, options DockercfgDeletedControllerOptions) *DockercfgDeletedController {
+func NewDockercfgDeletedController(secrets informers.SecretInformer, cl kclientset.Interface, options DockercfgDeletedControllerOptions) *DockercfgDeletedController {
 	e := &DockercfgDeletedController{
 		client: cl,
 	}
 
-	dockercfgSelector := fields.OneTermEqualSelector(api.SecretTypeField, string(api.SecretTypeDockercfg))
-	_, e.secretController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				opts := api.ListOptions{FieldSelector: dockercfgSelector}
-				return e.client.Core().Secrets(api.NamespaceAll).List(opts)
+	e.secretController = secrets.Informer().GetController()
+	secrets.Informer().AddEventHandlerWithResyncPeriod(
+		cache.FilteringResourceEventHandler{
+			FilterFunc: func(obj interface{}) bool {
+				switch t := obj.(type) {
+				case *api.Secret:
+					return t.Type == api.SecretTypeDockercfg
+				default:
+					utilruntime.HandleError(fmt.Errorf("object passed to %T that is not expected: %T", e, obj))
+					return false
+				}
 			},
-			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				opts := api.ListOptions{FieldSelector: dockercfgSelector, ResourceVersion: options.ResourceVersion}
-				return e.client.Core().Secrets(api.NamespaceAll).Watch(opts)
+			Handler: cache.ResourceEventHandlerFuncs{
+				DeleteFunc: e.secretDeleted,
 			},
 		},
-		&api.Secret{},
 		options.Resync,
-		cache.ResourceEventHandlerFuncs{
-			DeleteFunc: e.secretDeleted,
-		},
 	)
 
 	return e
@@ -59,27 +58,22 @@ func NewDockercfgDeletedController(cl kclientset.Interface, options DockercfgDel
 // The DockercfgDeletedController watches for service account dockercfg secrets to be deleted
 // It removes the corresponding token secret and service account references.
 type DockercfgDeletedController struct {
-	stopChan chan struct{}
-
-	client kclientset.Interface
-
-	secretController *cache.Controller
+	client           kclientset.Interface
+	secretController cache.Controller
 }
 
-// Runs controller loops and returns immediately
-func (e *DockercfgDeletedController) Run() {
-	if e.stopChan == nil {
-		e.stopChan = make(chan struct{})
-		go e.secretController.Run(e.stopChan)
-	}
-}
+// Run processes the queue.
+func (e *DockercfgDeletedController) Run(stopCh <-chan struct{}) {
+	defer utilruntime.HandleCrash()
 
-// Stop gracefully shuts down this controller
-func (e *DockercfgDeletedController) Stop() {
-	if e.stopChan != nil {
-		close(e.stopChan)
-		e.stopChan = nil
+	// Wait for the stores to fill
+	if !cache.WaitForCacheSync(stopCh, e.secretController.HasSynced) {
+		return
 	}
+
+	glog.V(5).Infof("Worker started")
+	<-stopCh
+	glog.V(1).Infof("Shutting down")
 }
 
 // secretDeleted reacts to a Secret being deleted by looking to see if it's a dockercfg secret for a service account, in which case it
@@ -165,7 +159,7 @@ func (e *DockercfgDeletedController) getServiceAccount(secret *api.Secret) (*api
 		return nil, nil
 	}
 
-	serviceAccount, err := e.client.Core().ServiceAccounts(secret.Namespace).Get(saName)
+	serviceAccount, err := e.client.Core().ServiceAccounts(secret.Namespace).Get(saName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}

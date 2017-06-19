@@ -8,13 +8,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/watch"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	kctl "k8s.io/kubernetes/pkg/kubectl"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/watch"
+	kprinters "k8s.io/kubernetes/pkg/printers"
 
 	"github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/cmd/cli/describe"
@@ -26,12 +26,21 @@ import (
 
 var (
 	importImageLong = templates.LongDesc(`
-		Import tag and image information from an external Docker image repository
+		Import the latest image information from a tag in a Docker registry
 
-		Only image streams that have a value set for spec.dockerImageRepository and/or
-		spec.Tags may have tag and image information imported.`)
+		Image streams allow you to control which images are rolled out to your builds
+		and applications. This command fetches the latest version of an image from a
+		remote repository and updates the image stream tag if it does not match the
+		previous value. Running the command multiple times will not create duplicate
+		entries. When importing an image, only the image metadata is copied, not the
+		image contents.
 
-	importImageExample = templates.Examples(`  %[1]s import-image mystream`)
+		If you wish to change the image stream tag or provide more advanced options,
+		see the 'tag' command.`)
+
+	importImageExample = templates.Examples(`
+	  %[1]s import-image mystream
+		`)
 )
 
 // NewCmdImportImage implements the OpenShift cli import-image command.
@@ -53,6 +62,7 @@ func NewCmdImportImage(fullName string, f *clientcmd.Factory, out, errout io.Wri
 	cmd.Flags().BoolVar(&opts.Confirm, "confirm", false, "If true, allow the image stream import location to be set or changed")
 	cmd.Flags().BoolVar(&opts.All, "all", false, "If true, import all tags from the provided source on creation or if --from is specified")
 	cmd.Flags().StringVar(&opts.ReferencePolicy, "reference-policy", sourceReferencePolicy, "Allow to request pullthrough for external image when set to 'local'. Defaults to 'source'.")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Fetch information about images without creating or updating an image stream.")
 	opts.Insecure = cmd.Flags().Bool("insecure", false, "If true, allow importing from registries that have invalid HTTPS certificates or are hosted via HTTP. This flag will take precedence over the insecure annotation.")
 
 	return cmd
@@ -65,6 +75,8 @@ type ImportImageOptions struct {
 	Confirm  bool
 	All      bool
 	Insecure *bool
+
+	DryRun bool
 
 	// internal values
 	Namespace       string
@@ -144,7 +156,6 @@ func (o *ImportImageOptions) Validate(cmd *cobra.Command) error {
 
 // Run contains all the necessary functionality for the OpenShift cli import-image command.
 func (o *ImportImageOptions) Run() error {
-	// TODO: add dry-run
 	stream, isi, err := o.createImageImport()
 	if err != nil {
 		return err
@@ -157,20 +168,56 @@ func (o *ImportImageOptions) Run() error {
 	case err != nil:
 		return err
 	default:
-		if wasError(result) {
-			fmt.Fprintf(o.errout, "The import completed with errors.\n\n")
+		if o.DryRun {
+			if wasError(result) {
+				fmt.Fprintf(o.errout, "The dry-run import completed with errors.\n\n")
+			} else {
+				fmt.Fprint(o.out, "The dry-run import completed successfully.\n\n")
+			}
 		} else {
-			fmt.Fprint(o.out, "The import completed successfully.\n\n")
+			if wasError(result) {
+				fmt.Fprintf(o.errout, "The import completed with errors.\n\n")
+			} else {
+				fmt.Fprint(o.out, "The import completed successfully.\n\n")
+			}
 		}
 
-		// optimization, use the image stream returned by the call
-		d := describe.ImageStreamDescriber{Interface: o.osClient}
-		info, err := d.Describe(o.Namespace, stream.Name, kctl.DescriberSettings{})
-		if err != nil {
-			return err
+		if result.Status.Import != nil {
+			// TODO: dry-run doesn't return an image stream, so we have to display partial results
+			info, err := describe.DescribeImageStream(result.Status.Import)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(o.out, info)
 		}
 
-		fmt.Fprintln(o.out, info)
+		if repo := result.Status.Repository; repo != nil {
+			for _, image := range repo.Images {
+				if image.Image != nil {
+					info, err := describe.DescribeImage(image.Image, imageapi.JoinImageStreamTag(stream.Name, image.Tag))
+					if err != nil {
+						fmt.Fprintf(o.errout, "error: tag %s failed: %v\n", image.Tag, err)
+					} else {
+						fmt.Fprintln(o.out, info)
+					}
+				} else {
+					fmt.Fprintf(o.errout, "error: repository tag %s failed: %v\n", image.Tag, image.Status.Message)
+				}
+			}
+		}
+
+		for _, image := range result.Status.Images {
+			if image.Image != nil {
+				info, err := describe.DescribeImage(image.Image, imageapi.JoinImageStreamTag(stream.Name, image.Tag))
+				if err != nil {
+					fmt.Fprintf(o.errout, "error: tag %s failed: %v\n", image.Tag, err)
+				} else {
+					fmt.Fprintln(o.out, info)
+				}
+			} else {
+				fmt.Fprintf(o.errout, "error: tag %s failed: %v\n", image.Tag, image.Status.Message)
+			}
+		}
 
 		if r := result.Status.Repository; r != nil && len(r.AdditionalTags) > 0 {
 			fmt.Fprintf(o.out, "\ninfo: The remote repository contained %d additional tags which were not imported: %s\n", len(r.AdditionalTags), strings.Join(r.AdditionalTags, ", "))
@@ -210,7 +257,7 @@ func (o *ImportImageOptions) Run() error {
 	fmt.Fprint(o.out, "The import completed successfully.\n\n")
 
 	d := describe.ImageStreamDescriber{Interface: o.osClient}
-	info, err := d.Describe(updatedStream.Namespace, updatedStream.Name, kctl.DescriberSettings{})
+	info, err := d.Describe(updatedStream.Namespace, updatedStream.Name, kprinters.DescriberSettings{})
 	if err != nil {
 		return err
 	}
@@ -221,11 +268,11 @@ func (o *ImportImageOptions) Run() error {
 
 func wasError(isi *imageapi.ImageStreamImport) bool {
 	for _, image := range isi.Status.Images {
-		if image.Status.Status == unversioned.StatusFailure {
+		if image.Status.Status == metav1.StatusFailure {
 			return true
 		}
 	}
-	if isi.Status.Repository != nil && isi.Status.Repository.Status.Status == unversioned.StatusFailure {
+	if isi.Status.Repository != nil && isi.Status.Repository.Status.Status == metav1.StatusFailure {
 		return true
 	}
 	return false
@@ -241,7 +288,7 @@ func (e importError) Error() string {
 }
 
 func (o *ImportImageOptions) waitForImport(resourceVersion string) (*imageapi.ImageStream, error) {
-	streamWatch, err := o.isClient.Watch(kapi.ListOptions{FieldSelector: fields.OneTermEqualSelector("metadata.name", o.Name), ResourceVersion: resourceVersion})
+	streamWatch, err := o.isClient.Watch(metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("metadata.name", o.Name).String(), ResourceVersion: resourceVersion})
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +328,7 @@ func (o *ImportImageOptions) waitForImport(resourceVersion string) (*imageapi.Im
 
 func (o *ImportImageOptions) createImageImport() (*imageapi.ImageStream, *imageapi.ImageStreamImport, error) {
 	var isi *imageapi.ImageStreamImport
-	stream, err := o.isClient.Get(o.Name)
+	stream, err := o.isClient.Get(o.Name, metav1.GetOptions{})
 	// no stream, try creating one
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -438,13 +485,13 @@ func (o *ImportImageOptions) newImageStream() (*imageapi.ImageStream, *imageapi.
 	// this is only for the legacy path that we need to create the IS.
 	if o.All {
 		stream = &imageapi.ImageStream{
-			ObjectMeta: kapi.ObjectMeta{Name: o.Name},
+			ObjectMeta: metav1.ObjectMeta{Name: o.Name},
 			Spec:       imageapi.ImageStreamSpec{DockerImageRepository: from},
 		}
 		isi = o.newImageStreamImportAll(stream, from)
 	} else {
 		stream = &imageapi.ImageStream{
-			ObjectMeta: kapi.ObjectMeta{Name: o.Name},
+			ObjectMeta: metav1.ObjectMeta{Name: o.Name},
 			Spec: imageapi.ImageStreamSpec{
 				Tags: map[string]imageapi.TagReference{
 					tag: {
@@ -479,12 +526,12 @@ func (o *ImportImageOptions) getReferencePolicy() imageapi.TagReferencePolicy {
 
 func (o *ImportImageOptions) newImageStreamImport(stream *imageapi.ImageStream) (*imageapi.ImageStreamImport, bool) {
 	isi := &imageapi.ImageStreamImport{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            stream.Name,
 			Namespace:       o.Namespace,
 			ResourceVersion: stream.ResourceVersion,
 		},
-		Spec: imageapi.ImageStreamImportSpec{Import: true},
+		Spec: imageapi.ImageStreamImportSpec{Import: !o.DryRun},
 	}
 	insecureAnnotation := stream.Annotations[imageapi.InsecureRepositoryAnnotation]
 	insecure := insecureAnnotation == "true"

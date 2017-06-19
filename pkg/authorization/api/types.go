@@ -1,10 +1,10 @@
 package api
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	kruntime "k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 // Authorization is calculated against
@@ -22,7 +22,7 @@ const (
 	VerbAll        = "*"
 	NonResourceAll = "*"
 
-	ScopesKey           = "authorization.openshift.io/scopes"
+	ScopesKey           = "scopes.authorization.openshift.io"
 	ScopesAllNamespaces = "*"
 
 	UserKind           = "User"
@@ -78,25 +78,29 @@ type PolicyRule struct {
 
 // IsPersonalSubjectAccessReview is a marker for PolicyRule.AttributeRestrictions that denotes that subjectaccessreviews on self should be allowed
 type IsPersonalSubjectAccessReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 }
+
+// +genclient=true
 
 // Role is a logical grouping of PolicyRules that can be referenced as a unit by RoleBindings.
 type Role struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// Rules holds all the PolicyRules for this Role
 	Rules []PolicyRule
 }
 
+// +genclient=true
+
 // RoleBinding references a Role, but not contain it.  It can reference any Role in the same namespace or in the global namespace.
 // It adds who information via Users and Groups and namespace information by which namespace it exists in.  RoleBindings in a given
 // namespace only have effect in that namespace (excepting the master namespace which has power in all namespaces).
 type RoleBinding struct {
-	unversioned.TypeMeta
-	kapi.ObjectMeta
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
 	// Subjects hold object references of to authorize with this rule
 	Subjects []kapi.ObjectReference
@@ -114,11 +118,11 @@ type RolesByName map[string]*Role
 // Policy is a object that holds all the Roles for a particular namespace.  There is at most
 // one Policy document per namespace.
 type Policy struct {
-	unversioned.TypeMeta
-	kapi.ObjectMeta
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
 	// LastModified is the last time that any part of the Policy was created, updated, or deleted
-	LastModified unversioned.Time
+	LastModified metav1.Time
 
 	// Roles holds all the Roles held by this Policy, mapped by Role.Name
 	Roles RolesByName
@@ -126,15 +130,17 @@ type Policy struct {
 
 type RoleBindingsByName map[string]*RoleBinding
 
+// +genclient=true
+
 // PolicyBinding is a object that holds all the RoleBindings for a particular namespace.  There is
 // one PolicyBinding document per referenced Policy namespace
 type PolicyBinding struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// LastModified is the last time that any part of the PolicyBinding was created, updated, or deleted
-	LastModified unversioned.Time
+	LastModified metav1.Time
 
 	// PolicyRef is a reference to the Policy that contains all the Roles that this PolicyBinding's RoleBindings may reference
 	PolicyRef kapi.ObjectReference
@@ -144,7 +150,7 @@ type PolicyBinding struct {
 
 // SelfSubjectRulesReview is a resource you can create to determine which actions you can perform in a namespace
 type SelfSubjectRulesReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Spec adds information about how to conduct the check
 	Spec SelfSubjectRulesReviewSpec
@@ -158,12 +164,13 @@ type SelfSubjectRulesReviewSpec struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil for a self-SubjectRulesReview, means "use the scopes on this request".
 	// Nil for a regular SubjectRulesReview, means the same as empty.
+	// +k8s:conversion-gen=false
 	Scopes []string
 }
 
 // SubjectRulesReview is a resource you can create to determine which actions another user can perform in a namespace
 type SubjectRulesReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Spec adds information about how to conduct the check
 	Spec SubjectRulesReviewSpec
@@ -193,7 +200,7 @@ type SubjectRulesReviewStatus struct {
 
 // ResourceAccessReviewResponse describes who can perform the action
 type ResourceAccessReviewResponse struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Namespace is the namespace used for the access review
 	Namespace string
@@ -213,7 +220,7 @@ type ResourceAccessReviewResponse struct {
 // ResourceAccessReview is a means to request a list of which users and groups are authorized to perform the
 // action specified by spec
 type ResourceAccessReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Action describes the action being tested
 	Action
@@ -221,7 +228,7 @@ type ResourceAccessReview struct {
 
 // SubjectAccessReviewResponse describes whether or not a user or group can perform an action
 type SubjectAccessReviewResponse struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Namespace is the namespace used for the access review
 	Namespace string
@@ -237,7 +244,7 @@ type SubjectAccessReviewResponse struct {
 
 // SubjectAccessReview is an object for requesting information about whether a user or group can perform an action
 type SubjectAccessReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Action describes the action being tested
 	Action
@@ -249,12 +256,13 @@ type SubjectAccessReview struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil for a self-SAR, means "use the scopes on this request".
 	// Nil for a regular SAR, means the same as empty.
+	// +k8s:conversion-gen=false
 	Scopes []string
 }
 
 // LocalResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec in a particular namespace
 type LocalResourceAccessReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Action describes the action being tested
 	Action
@@ -262,7 +270,7 @@ type LocalResourceAccessReview struct {
 
 // LocalSubjectAccessReview is an object for requesting information about whether a user or group can perform an action in a particular namespace
 type LocalSubjectAccessReview struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Action describes the action being tested.  The Namespace element is FORCED to the current namespace.
 	Action
@@ -274,6 +282,7 @@ type LocalSubjectAccessReview struct {
 	// Scopes to use for the evaluation.  Empty means "use the unscoped (full) permissions of the user/groups".
 	// Nil for a self-SAR, means "use the scopes on this request".
 	// Nil for a regular SAR, means the same as empty.
+	// +k8s:conversion-gen=false
 	Scopes []string
 }
 
@@ -301,9 +310,9 @@ type Action struct {
 
 // PolicyList is a collection of Policies
 type PolicyList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of policies
 	Items []Policy
@@ -311,9 +320,9 @@ type PolicyList struct {
 
 // PolicyBindingList is a collection of PolicyBindings
 type PolicyBindingList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of policyBindings
 	Items []PolicyBinding
@@ -321,9 +330,9 @@ type PolicyBindingList struct {
 
 // RoleBindingList is a collection of RoleBindings
 type RoleBindingList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of roleBindings
 	Items []RoleBinding
@@ -331,31 +340,37 @@ type RoleBindingList struct {
 
 // RoleList is a collection of Roles
 type RoleList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of roles
 	Items []Role
 }
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterRole is a logical grouping of PolicyRules that can be referenced as a unit by ClusterRoleBindings.
 type ClusterRole struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// Rules holds all the PolicyRules for this ClusterRole
 	Rules []PolicyRule
 }
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterRoleBinding references a ClusterRole, but not contain it.  It can reference any ClusterRole in the same namespace or in the global namespace.
 // It adds who information via Users and Groups and namespace information by which namespace it exists in.  ClusterRoleBindings in a given
 // namespace only have effect in that namespace (excepting the master namespace which has power in all namespaces).
 type ClusterRoleBinding struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// Subjects hold object references of to authorize with this rule
 	Subjects []kapi.ObjectReference
@@ -368,15 +383,18 @@ type ClusterRoleBinding struct {
 
 type ClusterRolesByName map[string]*ClusterRole
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterPolicy is a object that holds all the ClusterRoles for a particular namespace.  There is at most
 // one ClusterPolicy document per namespace.
 type ClusterPolicy struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// LastModified is the last time that any part of the ClusterPolicy was created, updated, or deleted
-	LastModified unversioned.Time
+	LastModified metav1.Time
 
 	// Roles holds all the ClusterRoles held by this ClusterPolicy, mapped by Role.Name
 	Roles ClusterRolesByName
@@ -384,15 +402,18 @@ type ClusterPolicy struct {
 
 type ClusterRoleBindingsByName map[string]*ClusterRoleBinding
 
+// +genclient=true
+// +nonNamespaced=true
+
 // ClusterPolicyBinding is a object that holds all the ClusterRoleBindings for a particular namespace.  There is
 // one ClusterPolicyBinding document per referenced ClusterPolicy namespace
 type ClusterPolicyBinding struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// LastModified is the last time that any part of the ClusterPolicyBinding was created, updated, or deleted
-	LastModified unversioned.Time
+	LastModified metav1.Time
 
 	// ClusterPolicyRef is a reference to the ClusterPolicy that contains all the ClusterRoles that this ClusterPolicyBinding's RoleBindings may reference
 	PolicyRef kapi.ObjectReference
@@ -402,9 +423,9 @@ type ClusterPolicyBinding struct {
 
 // ClusterPolicyList is a collection of ClusterPolicies
 type ClusterPolicyList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of ClusterPolicies
 	Items []ClusterPolicy
@@ -412,9 +433,9 @@ type ClusterPolicyList struct {
 
 // ClusterPolicyBindingList is a collection of ClusterPolicyBindings
 type ClusterPolicyBindingList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of ClusterPolicyBindings
 	Items []ClusterPolicyBinding
@@ -422,9 +443,9 @@ type ClusterPolicyBindingList struct {
 
 // ClusterRoleBindingList is a collection of ClusterRoleBindings
 type ClusterRoleBindingList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of ClusterRoleBindings
 	Items []ClusterRoleBinding
@@ -432,9 +453,9 @@ type ClusterRoleBindingList struct {
 
 // ClusterRoleList is a collection of ClusterRoles
 type ClusterRoleList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of ClusterRoles
 	Items []ClusterRole
@@ -446,10 +467,10 @@ type ClusterRoleList struct {
 // belongs.  If any one of those RoleBindingRestriction objects matches
 // a subject, rolebindings on that subject in the namespace are allowed.
 type RoleBindingRestriction struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Standard object's metadata.
-	kapi.ObjectMeta
+	metav1.ObjectMeta
 
 	// Spec defines the matcher.
 	Spec RoleBindingRestrictionSpec
@@ -470,10 +491,10 @@ type RoleBindingRestrictionSpec struct {
 
 // RoleBindingRestrictionList is a collection of RoleBindingRestriction objects.
 type RoleBindingRestrictionList struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 
 	// Standard object's metadata.
-	unversioned.ListMeta
+	metav1.ListMeta
 
 	// Items is a list of RoleBindingRestriction objects.
 	Items []RoleBindingRestriction
@@ -492,7 +513,7 @@ type UserRestriction struct {
 	Groups []string
 
 	// Selectors specifies a list of label selectors over user labels.
-	Selectors []unversioned.LabelSelector
+	Selectors []metav1.LabelSelector
 }
 
 // GroupRestriction matches a group either by a string match on the group name
@@ -502,7 +523,7 @@ type GroupRestriction struct {
 	Groups []string
 
 	// Selectors specifies a list of label selectors over group labels.
-	Selectors []unversioned.LabelSelector
+	Selectors []metav1.LabelSelector
 }
 
 // ServiceAccountRestriction matches a service account by a string match on

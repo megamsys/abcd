@@ -1,16 +1,21 @@
 package v1
 
 import (
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ImagePolicyConfig is the configuration for control of images running on the platform.
 type ImagePolicyConfig struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 
-	// ResolveImages indicates what kind of image resolution should be done.  If a rewriting policy is chosen,
+	// ResolveImages indicates the default image resolution behavior.  If a rewriting policy is chosen,
 	// then the image pull specs will be updated.
 	ResolveImages ImageResolutionType `json:"resolveImages"`
+
+	// ResolutionRules allows more specific image resolution rules to be applied per resource. If
+	// empty, it defaults to allowing local image stream lookups - "mysql" will map to the image stream
+	// tag "mysql:latest" in the current namespace if the stream supports it.
+	ResolutionRules []ImageResolutionPolicyRule `json:"resolutionRules"`
 
 	// ExecutionRules determine whether the use of an image is allowed in an object with a pod spec.
 	// By default, these rules only apply to pods, but may be extended to other resource types.
@@ -34,6 +39,17 @@ var (
 	// don't attempt resolution
 	DoNotAttempt ImageResolutionType = "DoNotAttempt"
 )
+
+// ImageResolutionPolicyRule describes resolution rules based on resource.
+type ImageResolutionPolicyRule struct {
+	// TargetResource is the identified group and resource. If Resource is *, this rule will apply
+	// to all resources in that group.
+	TargetResource GroupResource `json:"targetResource"`
+	// LocalNames will allow single segment names to be interpreted as namespace local image
+	// stream tags, but only if the target image stream tag has the "resolveLocalNames" field
+	// set.
+	LocalNames bool `json:"localNames"`
+}
 
 // ImageExecutionPolicyRule determines whether a provided image may be used on the platform.
 type ImageExecutionPolicyRule struct {
@@ -83,7 +99,7 @@ type ImageCondition struct {
 	// conditions must match.
 	MatchDockerImageLabels []ValueCondition `json:"matchDockerImageLabels"`
 	// MatchImageLabels checks against the resolved image for a label. All conditions must match.
-	MatchImageLabels []unversioned.LabelSelector `json:"matchImageLabels"`
+	MatchImageLabels []metav1.LabelSelector `json:"matchImageLabels"`
 	// MatchImageAnnotations checks against the resolved image for an annotation. All conditions must match.
 	MatchImageAnnotations []ValueCondition `json:"matchImageAnnotations"`
 }

@@ -20,15 +20,17 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	kubeutilnet "k8s.io/apimachinery/pkg/util/net"
+	kwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/cache"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	"k8s.io/kubernetes/pkg/fields"
+	kinternalinformers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
 	knetwork "k8s.io/kubernetes/pkg/kubelet/network"
-	"k8s.io/kubernetes/pkg/labels"
 	kexec "k8s.io/kubernetes/pkg/util/exec"
-	kubeutilnet "k8s.io/kubernetes/pkg/util/net"
-	kwait "k8s.io/kubernetes/pkg/util/wait"
 )
 
 type osdnPolicy interface {
@@ -49,7 +51,7 @@ type osdnPolicy interface {
 
 type OsdnNode struct {
 	policy             osdnPolicy
-	kClient            *kclientset.Clientset
+	kClient            kclientset.Interface
 	osClient           *osclient.Client
 	oc                 *ovsController
 	networkInfo        *NetworkInfo
@@ -71,10 +73,12 @@ type OsdnNode struct {
 	kubeletCniPlugin knetwork.NetworkPlugin
 
 	clearLbr0IptablesRule bool
+
+	kubeInformers kinternalinformers.SharedInformerFactory
 }
 
 // Called by higher layers to create the plugin SDN node instance
-func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclientset.Clientset, hostname string, selfIP string, iptablesSyncPeriod time.Duration, mtu uint32) (*OsdnNode, error) {
+func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient kclientset.Interface, hostname string, selfIP string, iptablesSyncPeriod time.Duration, mtu uint32, kubeInformers kinternalinformers.SharedInformerFactory) (*OsdnNode, error) {
 	var policy osdnPolicy
 	var pluginId int
 	var minOvsVersion string
@@ -122,12 +126,14 @@ func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclien
 	if err != nil {
 		return nil, err
 	}
+	oc := NewOVSController(ovsif, pluginId)
 
 	plugin := &OsdnNode{
 		policy:             policy,
 		kClient:            kClient,
 		osClient:           osClient,
-		oc:                 NewOVSController(ovsif, pluginId),
+		oc:                 oc,
+		podManager:         newPodManager(kClient, policy, mtu, oc),
 		localIP:            selfIP,
 		hostName:           hostname,
 		podNetworkReady:    make(chan struct{}),
@@ -136,6 +142,7 @@ func NewNodePlugin(pluginName string, osClient *osclient.Client, kClient *kclien
 		mtu:                mtu,
 		egressPolicies:     make(map[uint32][]osapi.EgressNetworkPolicy),
 		egressDNS:          NewEgressDNS(),
+		kubeInformers:      kubeInformers,
 	}
 
 	if err := plugin.dockerPreCNICleanup(); err != nil {
@@ -211,14 +218,37 @@ func (node *OsdnNode) Start() error {
 		return fmt.Errorf("failed to get network information: %v", err)
 	}
 
-	nodeIPTables := newNodeIPTables(node.networkInfo.ClusterNetwork.String(), node.iptablesSyncPeriod)
-	if err = nodeIPTables.Setup(); err != nil {
-		return fmt.Errorf("failed to set up iptables: %v", err)
+	hostIPNets, _, err := netutils.GetHostIPNetworks([]string{TUN})
+	if err != nil {
+		return fmt.Errorf("failed to get host network information: %v", err)
+	}
+	if err := node.networkInfo.checkHostNetworks(hostIPNets); err != nil {
+		// checkHostNetworks() errors *should* be fatal, but we didn't used to check this, and we can't break (mostly-)working nodes on upgrade.
+		log.Errorf("Local networks conflict with SDN; this will eventually cause problems: %v", err)
 	}
 
 	node.localSubnetCIDR, err = node.getLocalSubnet()
 	if err != nil {
 		return err
+	}
+
+	// Wait for kubelet to init the plugin so we get a knetwork.Host
+	log.V(5).Infof("Waiting for kubelet network plugin initialization")
+	<-node.kubeletInitReady
+	// Wait for kubelet itself to finish initializing
+	kwait.PollInfinite(100*time.Millisecond,
+		func() (bool, error) {
+			if node.host.GetRuntime() == nil {
+				return false, nil
+			}
+			return true, nil
+		})
+
+	//**** After this point, all OsdnNode fields have been initialized
+
+	nodeIPTables := newNodeIPTables(node.networkInfo.ClusterNetwork.String(), node.iptablesSyncPeriod)
+	if err = nodeIPTables.Setup(); err != nil {
+		return fmt.Errorf("failed to set up iptables: %v", err)
 	}
 
 	networkChanged, err := node.SetupSDN()
@@ -234,32 +264,16 @@ func (node *OsdnNode) Start() error {
 	if err = node.policy.Start(node); err != nil {
 		return err
 	}
-	go kwait.Forever(node.watchServices, 0)
+	node.watchServices()
 
-	// Wait for kubelet to init the plugin so we get a knetwork.Host
-	log.V(5).Infof("Waiting for kubelet network plugin initialization")
-	<-node.kubeletInitReady
-	// Wait for kubelet itself to finish initializing
-	kwait.PollInfinite(100*time.Millisecond,
-		func() (bool, error) {
-			if node.host.GetRuntime() == nil {
-				return false, nil
-			}
-			return true, nil
-		})
-
-	log.V(5).Infof("Creating and initializing openshift-sdn pod manager")
-	node.podManager, err = newPodManager(node.host, node.localSubnetCIDR, node.networkInfo, node.kClient, node.policy, node.mtu, node.oc)
-	if err != nil {
-		return err
-	}
-	if err := node.podManager.Start(cniserver.CNIServerSocketPath); err != nil {
+	log.V(5).Infof("Starting openshift-sdn pod manager")
+	if err := node.podManager.Start(cniserver.CNIServerSocketPath, node.host, node.localSubnetCIDR, node.networkInfo.ClusterNetwork); err != nil {
 		return err
 	}
 
 	if networkChanged {
 		var pods []kapi.Pod
-		pods, err = node.GetLocalPods(kapi.NamespaceAll)
+		pods, err = node.GetLocalPods(metav1.NamespaceAll)
 		if err != nil {
 			return err
 		}
@@ -300,9 +314,9 @@ func (node *OsdnNode) UpdatePod(pod kapi.Pod) error {
 
 func (node *OsdnNode) GetLocalPods(namespace string) ([]kapi.Pod, error) {
 	fieldSelector := fields.Set{"spec.nodeName": node.hostName}.AsSelector()
-	opts := kapi.ListOptions{
-		LabelSelector: labels.Everything(),
-		FieldSelector: fieldSelector,
+	opts := metav1.ListOptions{
+		LabelSelector: labels.Everything().String(),
+		FieldSelector: fieldSelector.String(),
 	}
 	podList, err := node.kClient.Core().Pods(namespace).List(opts)
 	if err != nil {
@@ -346,45 +360,45 @@ func isServiceChanged(oldsvc, newsvc *kapi.Service) bool {
 }
 
 func (node *OsdnNode) watchServices() {
-	services := make(map[string]*kapi.Service)
-	RunEventQueue(node.kClient.CoreClient.RESTClient(), Services, func(delta cache.Delta) error {
-		serv := delta.Object.(*kapi.Service)
+	RegisterSharedInformerEventHandlers(node.kubeInformers,
+		node.handleAddOrUpdateService, node.handleDeleteService, Services)
+}
 
-		// Ignore headless services
-		if !kapi.IsServiceIPSet(serv) {
-			return nil
+func (node *OsdnNode) handleAddOrUpdateService(obj, oldObj interface{}, eventType watch.EventType) {
+	serv := obj.(*kapi.Service)
+	// Ignore headless services
+	if !kapi.IsServiceIPSet(serv) {
+		return
+	}
+
+	log.V(5).Infof("Watch %s event for Service %q", eventType, serv.Name)
+	oldServ, exists := oldObj.(*kapi.Service)
+	if exists {
+		if !isServiceChanged(oldServ, serv) {
+			return
 		}
+		node.DeleteServiceRules(oldServ)
+	}
 
-		log.V(5).Infof("Watch %s event for Service %q", delta.Type, serv.ObjectMeta.Name)
-		switch delta.Type {
-		case cache.Sync, cache.Added, cache.Updated:
-			oldsvc, exists := services[string(serv.UID)]
-			if exists {
-				if !isServiceChanged(oldsvc, serv) {
-					break
-				}
-				node.DeleteServiceRules(oldsvc)
-			}
+	netid, err := node.policy.GetVNID(serv.Namespace)
+	if err != nil {
+		log.Errorf("Skipped adding service rules for serviceEvent: %v, Error: %v", eventType, err)
+		return
+	}
 
-			netid, err := node.policy.GetVNID(serv.Namespace)
-			if err != nil {
-				return fmt.Errorf("skipped adding service rules for serviceEvent: %v, Error: %v", delta.Type, err)
-			}
+	node.AddServiceRules(serv, netid)
+	if !exists {
+		node.policy.RefVNID(netid)
+	}
+}
 
-			node.AddServiceRules(serv, netid)
-			services[string(serv.UID)] = serv
-			if !exists {
-				node.policy.RefVNID(netid)
-			}
-		case cache.Deleted:
-			delete(services, string(serv.UID))
-			node.DeleteServiceRules(serv)
+func (node *OsdnNode) handleDeleteService(obj interface{}) {
+	serv := obj.(*kapi.Service)
+	log.V(5).Infof("Watch %s event for Service %q", watch.Deleted, serv.Name)
+	node.DeleteServiceRules(serv)
 
-			netid, err := node.policy.GetVNID(serv.Namespace)
-			if err == nil {
-				node.policy.UnrefVNID(netid)
-			}
-		}
-		return nil
-	})
+	netid, err := node.policy.GetVNID(serv.Namespace)
+	if err == nil {
+		node.policy.UnrefVNID(netid)
+	}
 }

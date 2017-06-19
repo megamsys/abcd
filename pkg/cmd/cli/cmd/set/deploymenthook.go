@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	"k8s.io/kubernetes/pkg/runtime"
 
 	"github.com/openshift/origin/pkg/cmd/templates"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
@@ -62,13 +62,14 @@ type DeploymentHookOptions struct {
 	Builder *resource.Builder
 	Infos   []*resource.Info
 
-	Encoder       runtime.Encoder
-	OutputVersion unversioned.GroupVersion
+	Encoder runtime.Encoder
 
 	Filenames []string
 	Container string
 	Selector  string
 	All       bool
+
+	Output string
 
 	ShortOutput bool
 	Local       bool
@@ -80,6 +81,8 @@ type DeploymentHookOptions struct {
 	Mid    bool
 	Post   bool
 	Remove bool
+
+	Cmd *cobra.Command
 
 	Command     []string
 	Environment []string
@@ -131,6 +134,7 @@ func NewCmdDeploymentHook(fullName string, f *clientcmd.Factory, out, errOut io.
 	cmd.Flags().BoolVar(&options.Local, "local", false, "If true, set deployment hook will NOT contact api-server but run locally.")
 
 	cmd.MarkFlagFilename("filename", "yaml", "yml", "json")
+	kcmdutil.AddDryRunFlag(cmd)
 
 	return cmd
 }
@@ -149,14 +153,8 @@ func (o *DeploymentHookOptions) Complete(f *clientcmd.Factory, cmd *cobra.Comman
 	if err != nil {
 		return err
 	}
-	clientConfig, err := f.ClientConfig()
-	if err != nil {
-		return err
-	}
-	o.OutputVersion, err = kcmdutil.OutputVersion(cmd, clientConfig.GroupVersion)
-	if err != nil {
-		return err
-	}
+
+	o.Cmd = cmd
 
 	mapper, typer := f.Object()
 	o.Builder = resource.NewBuilder(mapper, typer, resource.ClientMapperFunc(f.ClientForMapping), kapi.Codecs.UniversalDecoder()).
@@ -175,11 +173,9 @@ func (o *DeploymentHookOptions) Complete(f *clientcmd.Factory, cmd *cobra.Comman
 
 	}
 
-	output := kcmdutil.GetFlagString(cmd, "output")
-	if len(output) != 0 || o.Local {
-		o.PrintObject = func(infos []*resource.Info) error {
-			return f.PrintResourceInfos(cmd, infos, o.Out)
-		}
+	o.Output = kcmdutil.GetFlagString(cmd, "output")
+	o.PrintObject = func(infos []*resource.Info) error {
+		return f.PrintResourceInfos(cmd, infos, o.Out)
 	}
 
 	o.Encoder = f.JSONEncoder()
@@ -265,7 +261,7 @@ func (o *DeploymentHookOptions) Run() error {
 		return fmt.Errorf("%s/%s is not a deployment config or does not have an applicable strategy", infos[0].Mapping.Resource, infos[0].Name)
 	}
 
-	if o.PrintObject != nil {
+	if len(o.Output) > 0 || o.Local || kcmdutil.GetDryRunFlag(o.Cmd) {
 		return o.PrintObject(infos)
 	}
 
@@ -282,7 +278,7 @@ func (o *DeploymentHookOptions) Run() error {
 			continue
 		}
 
-		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, kapi.StrategicMergePatchType, patch.Patch)
+		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, types.StrategicMergePatchType, patch.Patch)
 		if err != nil {
 			fmt.Fprintf(o.Err, "error: %v\n", err)
 			failed = true

@@ -6,15 +6,17 @@ import (
 
 	"github.com/golang/glog"
 
+	kapierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kapierrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/cache"
+	kcoreinformers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core/internalversion"
+	kcorelisters "k8s.io/kubernetes/pkg/client/listers/core/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/controller/informers"
-	"k8s.io/kubernetes/pkg/labels"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/util/workqueue"
 
 	ocache "github.com/openshift/origin/pkg/client/cache"
 	"github.com/openshift/origin/pkg/controller/shared"
@@ -47,7 +49,7 @@ import (
 // test where I caught the problem.
 
 // NewClusterQuotaMappingController builds a mapping between namespaces and clusterresourcequotas
-func NewClusterQuotaMappingController(namespaceInformer informers.NamespaceInformer, quotaInformer shared.ClusterResourceQuotaInformer) *ClusterQuotaMappingController {
+func NewClusterQuotaMappingController(namespaceInformer kcoreinformers.NamespaceInformer, quotaInformer shared.ClusterResourceQuotaInformer) *ClusterQuotaMappingController {
 	c := &ClusterQuotaMappingController{
 		namespaceQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "controller_clusterquotamappingcontroller_namespaces"),
 
@@ -77,7 +79,7 @@ func NewClusterQuotaMappingController(namespaceInformer informers.NamespaceInfor
 
 type ClusterQuotaMappingController struct {
 	namespaceQueue   workqueue.RateLimitingInterface
-	namespaceLister  *cache.IndexerToNamespaceLister
+	namespaceLister  kcorelisters.NamespaceLister
 	namespacesSynced func() bool
 
 	quotaQueue   workqueue.RateLimitingInterface
@@ -93,13 +95,14 @@ func (c *ClusterQuotaMappingController) GetClusterQuotaMapper() ClusterQuotaMapp
 
 func (c *ClusterQuotaMappingController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
+	defer c.namespaceQueue.ShutDown()
+	defer c.quotaQueue.ShutDown()
 
-	// Wait for the stores to sync before starting any work in this controller.
-	ready := make(chan struct{})
-	go c.waitForSyncedStores(ready, stopCh)
-	select {
-	case <-ready:
-	case <-stopCh:
+	glog.Infof("Starting ClusterQuotaMappingController controller")
+	defer glog.Infof("Shutting down ClusterQuotaMappingController controller")
+
+	if !cache.WaitForCacheSync(stopCh, c.namespacesSynced, c.quotasSynced) {
+		utilruntime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
 		return
 	}
 
@@ -110,9 +113,6 @@ func (c *ClusterQuotaMappingController) Run(workers int, stopCh <-chan struct{})
 	}
 
 	<-stopCh
-	glog.Infof("Shutting down quota mapping controller")
-	c.namespaceQueue.ShutDown()
-	c.quotaQueue.ShutDown()
 }
 
 func (c *ClusterQuotaMappingController) syncQuota(quota *quotaapi.ClusterResourceQuota) error {
@@ -166,7 +166,7 @@ func (c *ClusterQuotaMappingController) syncQuota(quota *quotaapi.ClusterResourc
 }
 
 func (c *ClusterQuotaMappingController) syncNamespace(namespace *kapi.Namespace) error {
-	allQuotas, err1 := c.quotaLister.List(kapi.ListOptions{})
+	allQuotas, err1 := c.quotaLister.List(metav1.ListOptions{})
 	if err1 != nil {
 		return err1
 	}
@@ -264,8 +264,8 @@ func (c *ClusterQuotaMappingController) namespaceWork() bool {
 	}
 	defer c.namespaceQueue.Done(key)
 
-	namespace, exists, err := c.namespaceLister.GetByKey(key.(string))
-	if !exists {
+	namespace, err := c.namespaceLister.Get(key.(string))
+	if kapierrors.IsNotFound(err) {
 		c.namespaceQueue.Forget(key)
 		return false
 	}
@@ -274,7 +274,7 @@ func (c *ClusterQuotaMappingController) namespaceWork() bool {
 		return false
 	}
 
-	err = c.syncNamespace(namespace.(*kapi.Namespace))
+	err = c.syncNamespace(namespace)
 	outOfRetries := c.namespaceQueue.NumRequeues(key) > 5
 	switch {
 	case err != nil && outOfRetries:
@@ -297,20 +297,6 @@ func (c *ClusterQuotaMappingController) namespaceWorker() {
 			return
 		}
 	}
-}
-
-func (c *ClusterQuotaMappingController) waitForSyncedStores(ready chan<- struct{}, stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-
-	for !c.namespacesSynced() || !c.quotasSynced() {
-		glog.V(4).Infof("Waiting for the caches to sync before starting the quota mapping controller workers")
-		select {
-		case <-time.After(100 * time.Millisecond):
-		case <-stopCh:
-			return
-		}
-	}
-	close(ready)
 }
 
 func (c *ClusterQuotaMappingController) deleteNamespace(obj interface{}) {

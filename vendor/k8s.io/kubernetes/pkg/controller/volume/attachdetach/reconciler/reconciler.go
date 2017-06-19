@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/controller/volume/attachdetach/cache"
 	"k8s.io/kubernetes/pkg/controller/volume/attachdetach/statusupdater"
 	"k8s.io/kubernetes/pkg/util/goroutinemap/exponentialbackoff"
-	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/volume/util/nestedpendingoperations"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 )
@@ -93,7 +93,7 @@ func (rc *reconciler) Run(stopCh <-chan struct{}) {
 
 // reconciliationLoopFunc this can be disabled via cli option disableReconciliation.
 // It periodically checks whether the attached volumes from actual state
-// are still attached to the node and udpate the status if they are not.
+// are still attached to the node and update the status if they are not.
 func (rc *reconciler) reconciliationLoopFunc() func() {
 	return func() {
 
@@ -121,12 +121,7 @@ func (rc *reconciler) updateSyncTime() {
 
 func (rc *reconciler) syncStates() {
 	volumesPerNode := rc.actualStateOfWorld.GetAttachedVolumesPerNode()
-	for nodeName, volumes := range volumesPerNode {
-		err := rc.attacherDetacher.VerifyVolumesAreAttached(volumes, nodeName, rc.actualStateOfWorld)
-		if err != nil {
-			glog.Errorf("Error in syncing states for volumes: %v", err)
-		}
-	}
+	rc.attacherDetacher.VerifyVolumesAreAttached(volumesPerNode, rc.actualStateOfWorld)
 }
 
 func (rc *reconciler) reconcile() {
@@ -189,9 +184,8 @@ func (rc *reconciler) reconcile() {
 				// Ignore nestedpendingoperations.IsAlreadyExists && exponentialbackoff.IsExponentialBackoff errors, they are expected.
 				// Log all other errors.
 				glog.Errorf(
-					"operationExecutor.DetachVolume failed to start for volume %q (spec.Name: %q) from node %q with err: %v",
+					"operationExecutor.DetachVolume failed to start for volume %q from node %q with err: %v",
 					attachedVolume.VolumeName,
-					attachedVolume.VolumeSpec.Name(),
 					attachedVolume.NodeName,
 					err)
 			}

@@ -14,8 +14,9 @@ import (
 	"github.com/blang/semver"
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/homedir"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/util/homedir"
 
 	"github.com/openshift/origin/pkg/bootstrap/docker/dockerhelper"
 	"github.com/openshift/origin/pkg/bootstrap/docker/errors"
@@ -87,6 +88,7 @@ type Helper struct {
 	containerName string
 	routingSuffix string
 	serverIP      string
+	version       *semver.Version
 }
 
 // StartOptions represent the parameters sent to the start command
@@ -115,10 +117,10 @@ type StartOptions struct {
 }
 
 // NewHelper creates a new OpenShift helper
-func NewHelper(client *docker.Client, hostHelper *host.HostHelper, image, containerName, publicHostname, routingSuffix string) *Helper {
+func NewHelper(client *docker.Client, dockerHelper *dockerhelper.Helper, hostHelper *host.HostHelper, image, containerName, publicHostname, routingSuffix string) *Helper {
 	return &Helper{
 		client:        client,
-		dockerHelper:  dockerhelper.NewHelper(client, nil),
+		dockerHelper:  dockerHelper,
 		execHelper:    dockerexec.NewExecHelper(client, containerName),
 		hostHelper:    hostHelper,
 		runHelper:     run.NewRunHelper(client),
@@ -427,7 +429,7 @@ func (h *Helper) Start(opt *StartOptions, out io.Writer) (string, error) {
 // CheckNodes determines if there is more than one node that corresponds to the
 // current machine and removes the one that doesn't match the default node name
 func (h *Helper) CheckNodes(kclient kclientset.Interface) error {
-	nodes, err := kclient.Core().Nodes().List(kapi.ListOptions{})
+	nodes, err := kclient.Core().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		return errors.NewError("cannot retrieve nodes").WithCause(err)
 	}
@@ -614,7 +616,10 @@ func GetConfigFromContainer(client *docker.Client) (*configapi.MasterConfig, err
 	return config, nil
 }
 
-func (h *Helper) serverVersion() (semver.Version, error) {
+func (h *Helper) ServerVersion() (semver.Version, error) {
+	if h.version != nil {
+		return *h.version, nil
+	}
 	versionText, _, _, err := h.runHelper.New().Image(h.image).
 		Command("version").
 		DiscardContainer().
@@ -631,13 +636,16 @@ func (h *Helper) serverVersion() (semver.Version, error) {
 			break
 		}
 	}
-	return semver.Parse(versionStr)
+	version, err := semver.Parse(versionStr)
+	if err == nil {
+		// ignore pre-release portion
+		version.Pre = []semver.PRVersion{}
+		h.version = &version
+	}
+	return version, err
 }
 
 func useDNSIP(version semver.Version) bool {
-	// Ignore pre-release portion
-	version.Pre = []semver.PRVersion{}
-
 	if version.Major == 1 {
 		return version.GTE(version15)
 	}
@@ -719,7 +727,7 @@ func (h *Helper) updateConfig(configDir string, opt *StartOptions) error {
 	if err != nil {
 		return err
 	}
-	version, err := h.serverVersion()
+	version, err := h.ServerVersion()
 	if err != nil {
 		return err
 	}
@@ -729,6 +737,19 @@ func (h *Helper) updateConfig(configDir string, opt *StartOptions) error {
 		nodeCfg.DNSIP = ""
 	}
 	nodeCfg.DNSBindAddress = ""
+
+	if h.supportsCgroupDriver() {
+		// Set the cgroup driver from the current docker
+		cgroupDriver, err := h.dockerHelper.CgroupDriver()
+		if err != nil {
+			return err
+		}
+		if nodeCfg.KubeletArguments == nil {
+			nodeCfg.KubeletArguments = configapi.ExtendedArguments{}
+		}
+		nodeCfg.KubeletArguments["cgroup-driver"] = []string{cgroupDriver}
+	}
+
 	cfgBytes, err = configapilatest.WriteYAML(nodeCfg)
 	if err != nil {
 		return err
@@ -782,4 +803,26 @@ func getUsedPorts(data string) map[int]struct{} {
 	}
 	glog.V(2).Infof("Used ports in container: %#v", ports)
 	return ports
+}
+
+func (h *Helper) supportsCgroupDriver() bool {
+	script := `#!/bin/bash
+
+# Exit with an error
+set -e
+
+# Ensure we have a link to the openshift binary named kubelet
+if [[ ! -f /usr/bin/kubelet ]]; then
+   ln -s /usr/bin/openshift /usr/bin/kubelet
+fi
+
+kubelet --help | grep -- "--cgroup-driver"
+`
+	rc, err := h.runHelper.New().Image(h.image).
+		DiscardContainer().
+		Entrypoint("/bin/bash").
+		Command("-c", script).
+		Run()
+
+	return rc == 0 && err == nil
 }

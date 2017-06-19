@@ -17,17 +17,17 @@ limitations under the License.
 package v1beta1
 
 import (
+	"encoding/json"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
-	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/conversion"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 func addConversionFuncs(scheme *runtime.Scheme) error {
@@ -41,16 +41,19 @@ func addConversionFuncs(scheme *runtime.Scheme) error {
 		Convert_v1beta1_DeploymentStrategy_To_extensions_DeploymentStrategy,
 		Convert_extensions_RollingUpdateDeployment_To_v1beta1_RollingUpdateDeployment,
 		Convert_v1beta1_RollingUpdateDeployment_To_extensions_RollingUpdateDeployment,
+		Convert_extensions_RollingUpdateDaemonSet_To_v1beta1_RollingUpdateDaemonSet,
+		Convert_v1beta1_RollingUpdateDaemonSet_To_extensions_RollingUpdateDaemonSet,
 		Convert_extensions_ReplicaSetSpec_To_v1beta1_ReplicaSetSpec,
 		Convert_v1beta1_ReplicaSetSpec_To_extensions_ReplicaSetSpec,
 		// autoscaling
+		Convert_v1beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutoscaler,
+		Convert_autoscaling_HorizontalPodAutoscaler_To_v1beta1_HorizontalPodAutoscaler,
 		Convert_autoscaling_CrossVersionObjectReference_To_v1beta1_SubresourceReference,
 		Convert_v1beta1_SubresourceReference_To_autoscaling_CrossVersionObjectReference,
 		Convert_autoscaling_HorizontalPodAutoscalerSpec_To_v1beta1_HorizontalPodAutoscalerSpec,
 		Convert_v1beta1_HorizontalPodAutoscalerSpec_To_autoscaling_HorizontalPodAutoscalerSpec,
-		// batch
-		Convert_batch_JobSpec_To_v1beta1_JobSpec,
-		Convert_v1beta1_JobSpec_To_batch_JobSpec,
+		Convert_autoscaling_HorizontalPodAutoscalerStatus_To_v1beta1_HorizontalPodAutoscalerStatus,
+		Convert_v1beta1_HorizontalPodAutoscalerStatus_To_autoscaling_HorizontalPodAutoscalerStatus,
 	)
 	if err != nil {
 		return err
@@ -59,7 +62,7 @@ func addConversionFuncs(scheme *runtime.Scheme) error {
 	// Add field label conversions for kinds having selectable nothing but ObjectMeta fields.
 	for _, k := range []string{"DaemonSet", "Deployment", "Ingress"} {
 		kind := k // don't close over range variables
-		err = api.Scheme.AddFieldLabelConversionFunc("extensions/v1beta1", kind,
+		err = scheme.AddFieldLabelConversionFunc("extensions/v1beta1", kind,
 			func(label, value string) (string, string, error) {
 				switch label {
 				case "metadata.name", "metadata.namespace":
@@ -74,16 +77,7 @@ func addConversionFuncs(scheme *runtime.Scheme) error {
 		}
 	}
 
-	return api.Scheme.AddFieldLabelConversionFunc("extensions/v1beta1", "Job",
-		func(label, value string) (string, string, error) {
-			switch label {
-			case "metadata.name", "metadata.namespace", "status.successful":
-				return label, value, nil
-			default:
-				return "", "", fmt.Errorf("field label not supported: %s", label)
-			}
-		},
-	)
+	return nil
 }
 
 func Convert_extensions_ScaleStatus_To_v1beta1_ScaleStatus(in *extensions.ScaleStatus, out *ScaleStatus, s conversion.Scope) error {
@@ -96,7 +90,7 @@ func Convert_extensions_ScaleStatus_To_v1beta1_ScaleStatus(in *extensions.ScaleS
 			out.Selector = in.Selector.MatchLabels
 		}
 
-		selector, err := unversioned.LabelSelectorAsSelector(in.Selector)
+		selector, err := metav1.LabelSelectorAsSelector(in.Selector)
 		if err != nil {
 			return fmt.Errorf("invalid label selector: %v", err)
 		}
@@ -113,14 +107,14 @@ func Convert_v1beta1_ScaleStatus_To_extensions_ScaleStatus(in *ScaleStatus, out 
 	// new field can be expected to know about the old field (though that's not quite true, due
 	// to kubectl apply). However, these fields are readonly, so any non-nil value should work.
 	if in.TargetSelector != "" {
-		labelSelector, err := unversioned.ParseToLabelSelector(in.TargetSelector)
+		labelSelector, err := metav1.ParseToLabelSelector(in.TargetSelector)
 		if err != nil {
 			out.Selector = nil
 			return fmt.Errorf("failed to parse target selector: %v", err)
 		}
 		out.Selector = labelSelector
 	} else if in.Selector != nil {
-		out.Selector = new(unversioned.LabelSelector)
+		out.Selector = new(metav1.LabelSelector)
 		selector := make(map[string]string)
 		for key, val := range in.Selector {
 			selector[key] = val
@@ -239,6 +233,23 @@ func Convert_v1beta1_RollingUpdateDeployment_To_extensions_RollingUpdateDeployme
 	return nil
 }
 
+func Convert_extensions_RollingUpdateDaemonSet_To_v1beta1_RollingUpdateDaemonSet(in *extensions.RollingUpdateDaemonSet, out *RollingUpdateDaemonSet, s conversion.Scope) error {
+	if out.MaxUnavailable == nil {
+		out.MaxUnavailable = &intstr.IntOrString{}
+	}
+	if err := s.Convert(&in.MaxUnavailable, out.MaxUnavailable, 0); err != nil {
+		return err
+	}
+	return nil
+}
+
+func Convert_v1beta1_RollingUpdateDaemonSet_To_extensions_RollingUpdateDaemonSet(in *RollingUpdateDaemonSet, out *extensions.RollingUpdateDaemonSet, s conversion.Scope) error {
+	if err := s.Convert(in.MaxUnavailable, &out.MaxUnavailable, 0); err != nil {
+		return err
+	}
+	return nil
+}
+
 func Convert_extensions_ReplicaSetSpec_To_v1beta1_ReplicaSetSpec(in *extensions.ReplicaSetSpec, out *ReplicaSetSpec, s conversion.Scope) error {
 	out.Replicas = new(int32)
 	*out.Replicas = int32(in.Replicas)
@@ -262,56 +273,6 @@ func Convert_v1beta1_ReplicaSetSpec_To_extensions_ReplicaSetSpec(in *ReplicaSetS
 	return nil
 }
 
-func Convert_batch_JobSpec_To_v1beta1_JobSpec(in *batch.JobSpec, out *JobSpec, s conversion.Scope) error {
-	out.Parallelism = in.Parallelism
-	out.Completions = in.Completions
-	out.ActiveDeadlineSeconds = in.ActiveDeadlineSeconds
-	out.Selector = in.Selector
-	// BEGIN non-standard conversion
-	// autoSelector has opposite meaning as manualSelector.
-	// in both cases, unset means false, and unset is always preferred to false.
-	// unset vs set-false distinction is not preserved.
-	manualSelector := in.ManualSelector != nil && *in.ManualSelector
-	autoSelector := !manualSelector
-	if autoSelector {
-		out.AutoSelector = new(bool)
-		*out.AutoSelector = true
-	} else {
-		out.AutoSelector = nil
-	}
-	// END non-standard conversion
-
-	if err := v1.Convert_api_PodTemplateSpec_To_v1_PodTemplateSpec(&in.Template, &out.Template, s); err != nil {
-		return err
-	}
-	return nil
-}
-
-func Convert_v1beta1_JobSpec_To_batch_JobSpec(in *JobSpec, out *batch.JobSpec, s conversion.Scope) error {
-	out.Parallelism = in.Parallelism
-	out.Completions = in.Completions
-	out.ActiveDeadlineSeconds = in.ActiveDeadlineSeconds
-	out.Selector = in.Selector
-	// BEGIN non-standard conversion
-	// autoSelector has opposite meaning as manualSelector.
-	// in both cases, unset means false, and unset is always preferred to false.
-	// unset vs set-false distinction is not preserved.
-	autoSelector := bool(in.AutoSelector != nil && *in.AutoSelector)
-	manualSelector := !autoSelector
-	if manualSelector {
-		out.ManualSelector = new(bool)
-		*out.ManualSelector = true
-	} else {
-		out.ManualSelector = nil
-	}
-	// END non-standard conversion
-
-	if err := v1.Convert_v1_PodTemplateSpec_To_api_PodTemplateSpec(&in.Template, &out.Template, s); err != nil {
-		return err
-	}
-	return nil
-}
-
 func Convert_autoscaling_CrossVersionObjectReference_To_v1beta1_SubresourceReference(in *autoscaling.CrossVersionObjectReference, out *SubresourceReference, s conversion.Scope) error {
 	out.Kind = in.Kind
 	out.Name = in.Name
@@ -327,6 +288,121 @@ func Convert_v1beta1_SubresourceReference_To_autoscaling_CrossVersionObjectRefer
 	return nil
 }
 
+func Convert_autoscaling_HorizontalPodAutoscaler_To_v1beta1_HorizontalPodAutoscaler(in *autoscaling.HorizontalPodAutoscaler, out *HorizontalPodAutoscaler, s conversion.Scope) error {
+	if err := autoConvert_autoscaling_HorizontalPodAutoscaler_To_v1beta1_HorizontalPodAutoscaler(in, out, s); err != nil {
+		return err
+	}
+
+	otherMetrics := make([]MetricSpec, 0, len(in.Spec.Metrics))
+	for _, metric := range in.Spec.Metrics {
+		if metric.Type == autoscaling.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == api.ResourceCPU && metric.Resource.TargetAverageUtilization != nil {
+			continue
+		}
+
+		convMetric := MetricSpec{}
+		if err := Convert_autoscaling_MetricSpec_To_v1beta1_MetricSpec(&metric, &convMetric, s); err != nil {
+			return err
+		}
+		otherMetrics = append(otherMetrics, convMetric)
+	}
+
+	// NB: we need to save the status even if it maps to a CPU utilization status in order to save the raw value as well
+	currentMetrics := make([]MetricStatus, len(in.Status.CurrentMetrics))
+	for i, currentMetric := range in.Status.CurrentMetrics {
+		if err := Convert_autoscaling_MetricStatus_To_v1beta1_MetricStatus(&currentMetric, &currentMetrics[i], s); err != nil {
+			return err
+		}
+	}
+
+	if len(otherMetrics) > 0 || len(in.Status.CurrentMetrics) > 0 {
+		old := out.Annotations
+		out.Annotations = make(map[string]string, len(old)+2)
+		if old != nil {
+			for k, v := range old {
+				out.Annotations[k] = v
+			}
+		}
+	}
+
+	if len(otherMetrics) > 0 {
+		otherMetricsEnc, err := json.Marshal(otherMetrics)
+		if err != nil {
+			return err
+		}
+		out.Annotations[autoscaling.MetricSpecsAnnotation] = string(otherMetricsEnc)
+	}
+
+	if len(in.Status.CurrentMetrics) > 0 {
+		currentMetricsEnc, err := json.Marshal(currentMetrics)
+		if err != nil {
+			return err
+		}
+		out.Annotations[autoscaling.MetricStatusesAnnotation] = string(currentMetricsEnc)
+	}
+
+	return nil
+}
+
+func Convert_v1beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutoscaler(in *HorizontalPodAutoscaler, out *autoscaling.HorizontalPodAutoscaler, s conversion.Scope) error {
+	if err := autoConvert_v1beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutoscaler(in, out, s); err != nil {
+		return err
+	}
+
+	if otherMetricsEnc, hasOtherMetrics := out.Annotations[autoscaling.MetricSpecsAnnotation]; hasOtherMetrics {
+		var otherMetrics []MetricSpec
+		if err := json.Unmarshal([]byte(otherMetricsEnc), &otherMetrics); err != nil {
+			return err
+		}
+
+		// the normal Spec conversion could have populated out.Spec.Metrics with a single element, so deal with that
+		outMetrics := make([]autoscaling.MetricSpec, len(otherMetrics)+len(out.Spec.Metrics))
+		for i, metric := range otherMetrics {
+			if err := Convert_v1beta1_MetricSpec_To_autoscaling_MetricSpec(&metric, &outMetrics[i], s); err != nil {
+				return err
+			}
+		}
+		if out.Spec.Metrics != nil {
+			outMetrics[len(otherMetrics)] = out.Spec.Metrics[0]
+		}
+		out.Spec.Metrics = outMetrics
+		delete(out.Annotations, autoscaling.MetricSpecsAnnotation)
+	}
+
+	if currentMetricsEnc, hasCurrentMetrics := out.Annotations[autoscaling.MetricStatusesAnnotation]; hasCurrentMetrics {
+		// ignore any existing status values -- the ones here have more information
+		var currentMetrics []MetricStatus
+		if err := json.Unmarshal([]byte(currentMetricsEnc), &currentMetrics); err != nil {
+			return err
+		}
+
+		out.Status.CurrentMetrics = make([]autoscaling.MetricStatus, len(currentMetrics))
+		for i, currentMetric := range currentMetrics {
+			if err := Convert_v1beta1_MetricStatus_To_autoscaling_MetricStatus(&currentMetric, &out.Status.CurrentMetrics[i], s); err != nil {
+				return err
+			}
+		}
+		delete(out.Annotations, autoscaling.MetricStatusesAnnotation)
+	}
+
+	// autoscaling/v1 formerly had an implicit default applied in the controller.  In v2alpha1, we apply it explicitly.
+	// We apply it here, explicitly, since we have access to the full set of metrics from the annotation.
+	if len(out.Spec.Metrics) == 0 {
+		// no other metrics, no explicit CPU value set
+		out.Spec.Metrics = []autoscaling.MetricSpec{
+			{
+				Type: autoscaling.ResourceMetricSourceType,
+				Resource: &autoscaling.ResourceMetricSource{
+					Name: api.ResourceCPU,
+				},
+			},
+		}
+		out.Spec.Metrics[0].Resource.TargetAverageUtilization = new(int32)
+		*out.Spec.Metrics[0].Resource.TargetAverageUtilization = autoscaling.DefaultCPUUtilization
+	}
+
+	return nil
+}
+
 func Convert_autoscaling_HorizontalPodAutoscalerSpec_To_v1beta1_HorizontalPodAutoscalerSpec(in *autoscaling.HorizontalPodAutoscalerSpec, out *HorizontalPodAutoscalerSpec, s conversion.Scope) error {
 	if err := Convert_autoscaling_CrossVersionObjectReference_To_v1beta1_SubresourceReference(&in.ScaleTargetRef, &out.ScaleRef, s); err != nil {
 		return err
@@ -338,9 +414,16 @@ func Convert_autoscaling_HorizontalPodAutoscalerSpec_To_v1beta1_HorizontalPodAut
 		out.MinReplicas = nil
 	}
 	out.MaxReplicas = in.MaxReplicas
-	if in.TargetCPUUtilizationPercentage != nil {
-		out.CPUUtilization = &CPUTargetUtilization{TargetPercentage: *in.TargetCPUUtilizationPercentage}
+
+	for _, metric := range in.Metrics {
+		if metric.Type == autoscaling.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == api.ResourceCPU {
+			if metric.Resource.TargetAverageUtilization != nil {
+				out.CPUUtilization = &CPUTargetUtilization{TargetPercentage: *metric.Resource.TargetAverageUtilization}
+			}
+			break
+		}
 	}
+
 	return nil
 }
 
@@ -355,9 +438,60 @@ func Convert_v1beta1_HorizontalPodAutoscalerSpec_To_autoscaling_HorizontalPodAut
 		out.MinReplicas = nil
 	}
 	out.MaxReplicas = int32(in.MaxReplicas)
+
 	if in.CPUUtilization != nil {
-		out.TargetCPUUtilizationPercentage = new(int32)
-		*out.TargetCPUUtilizationPercentage = int32(in.CPUUtilization.TargetPercentage)
+		out.Metrics = []autoscaling.MetricSpec{
+			{
+				Type: autoscaling.ResourceMetricSourceType,
+				Resource: &autoscaling.ResourceMetricSource{
+					Name: api.ResourceCPU,
+				},
+			},
+		}
+		out.Metrics[0].Resource.TargetAverageUtilization = new(int32)
+		*out.Metrics[0].Resource.TargetAverageUtilization = in.CPUUtilization.TargetPercentage
+	}
+
+	return nil
+}
+
+func Convert_autoscaling_HorizontalPodAutoscalerStatus_To_v1beta1_HorizontalPodAutoscalerStatus(in *autoscaling.HorizontalPodAutoscalerStatus, out *HorizontalPodAutoscalerStatus, s conversion.Scope) error {
+	out.ObservedGeneration = in.ObservedGeneration
+	out.LastScaleTime = in.LastScaleTime
+
+	out.CurrentReplicas = in.CurrentReplicas
+	out.DesiredReplicas = in.DesiredReplicas
+
+	for _, metric := range in.CurrentMetrics {
+		if metric.Type == autoscaling.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == api.ResourceCPU {
+			if metric.Resource.CurrentAverageUtilization != nil {
+
+				out.CurrentCPUUtilizationPercentage = new(int32)
+				*out.CurrentCPUUtilizationPercentage = *metric.Resource.CurrentAverageUtilization
+			}
+		}
+	}
+	return nil
+}
+
+func Convert_v1beta1_HorizontalPodAutoscalerStatus_To_autoscaling_HorizontalPodAutoscalerStatus(in *HorizontalPodAutoscalerStatus, out *autoscaling.HorizontalPodAutoscalerStatus, s conversion.Scope) error {
+	out.ObservedGeneration = in.ObservedGeneration
+	out.LastScaleTime = in.LastScaleTime
+
+	out.CurrentReplicas = in.CurrentReplicas
+	out.DesiredReplicas = in.DesiredReplicas
+
+	if in.CurrentCPUUtilizationPercentage != nil {
+		out.CurrentMetrics = []autoscaling.MetricStatus{
+			{
+				Type: autoscaling.ResourceMetricSourceType,
+				Resource: &autoscaling.ResourceMetricStatus{
+					Name: api.ResourceCPU,
+				},
+			},
+		}
+		out.CurrentMetrics[0].Resource.CurrentAverageUtilization = new(int32)
+		*out.CurrentMetrics[0].Resource.CurrentAverageUtilization = *in.CurrentCPUUtilizationPercentage
 	}
 	return nil
 }

@@ -24,12 +24,10 @@ import (
 
 	srvconfig "github.com/openshift/origin/pkg/dockerregistry/server/configuration"
 	registrytest "github.com/openshift/origin/pkg/dockerregistry/testutil"
+	restclient "k8s.io/client-go/rest"
 	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
-	"k8s.io/kubernetes/pkg/client/restclient"
 
 	osclient "github.com/openshift/origin/pkg/client"
-	"github.com/openshift/origin/pkg/client/testclient"
-	imagetest "github.com/openshift/origin/pkg/image/admission/testutil"
 )
 
 const testPassthroughToUpstream = "openshift.test.passthrough-to-upstream"
@@ -53,14 +51,8 @@ func TestBlobDescriptorServiceIsApplied(t *testing.T) {
 	// to make other unit tests working
 	defer m.changeUnsetRepository(false)
 
-	testImage, err := registrytest.NewImageForManifest("user/app", registrytest.SampleImageManifestSchema1, "", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	testImageStream := registrytest.TestNewImageStreamObject("user", "app", "latest", testImage.Name, "")
-	client := &testclient.Fake{}
-	client.AddReactor("get", "imagestreams", imagetest.GetFakeImageStreamGetHandler(t, *testImageStream))
-	client.AddReactor("get", "images", registrytest.GetFakeImageGetHandler(t, *testImage))
+	fos, client := registrytest.NewFakeOpenShiftWithClient()
+	testImage := registrytest.AddRandomImage(t, fos, "user", "app", "latest")
 
 	ctx := context.Background()
 	ctx = WithConfiguration(ctx, &srvconfig.Configuration{})

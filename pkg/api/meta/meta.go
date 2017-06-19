@@ -3,9 +3,9 @@ package meta
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 
 	buildapi "github.com/openshift/origin/pkg/build/api"
 )
@@ -35,6 +35,9 @@ func GetImageReferenceMutator(obj runtime.Object) (ImageReferenceMutator, error)
 	default:
 		if spec, path, err := GetPodSpec(obj); err == nil {
 			return &podSpecMutator{spec: spec, path: path}, nil
+		}
+		if spec, path, err := GetPodSpecV1(obj); err == nil {
+			return &podSpecV1Mutator{spec: spec, path: path}, nil
 		}
 		return nil, errNoImageMutator
 	}

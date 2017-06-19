@@ -1,24 +1,29 @@
 package servicebroker
 
 import (
-	"errors"
 	"net/http"
 	"reflect"
 
-	internalversiontemplate "github.com/openshift/origin/pkg/template/clientset/internalclientset/typed/template/internalversion"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apiserver/pkg/authentication/user"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/auth/user"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	"k8s.io/kubernetes/pkg/apis/authorization"
 
-	authorizationapi "github.com/openshift/origin/pkg/authorization/api"
+	"github.com/golang/glog"
+	"github.com/openshift/origin/pkg/authorization/util"
 	"github.com/openshift/origin/pkg/openservicebroker/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
 )
 
-func (b *Broker) ensureSecret(impersonatedKC internalversion.SecretsGetter, namespace string, instanceID string, preq *api.ProvisionRequest, didWork *bool) (*kapi.Secret, *api.Response) {
+// ensureSecret ensures the existence of a Secret object containing the template
+// configuration parameters.
+func (b *Broker) ensureSecret(u user.Info, namespace string, instanceID string, preq *api.ProvisionRequest, didWork *bool) (*kapi.Secret, *api.Response) {
+	glog.V(4).Infof("Template service broker: ensureSecret")
+
 	secret := &kapi.Secret{
-		ObjectMeta: kapi.ObjectMeta{Name: instanceID},
+		ObjectMeta: metav1.ObjectMeta{Name: instanceID},
 		Data:       map[string][]byte{},
 	}
 
@@ -28,14 +33,32 @@ func (b *Broker) ensureSecret(impersonatedKC internalversion.SecretsGetter, name
 		}
 	}
 
-	createdSec, err := impersonatedKC.Secrets(namespace).Create(secret)
+	if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+		Namespace: namespace,
+		Verb:      "create",
+		Group:     kapi.GroupName,
+		Resource:  "secrets",
+	}); err != nil {
+		return nil, api.Forbidden(err)
+	}
+
+	createdSec, err := b.kc.Core().Secrets(namespace).Create(secret)
 	if err == nil {
 		*didWork = true
 		return createdSec, nil
 	}
 
 	if kerrors.IsAlreadyExists(err) {
-		existingSec, err := impersonatedKC.Secrets(namespace).Get(secret.Name)
+		if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+			Namespace: namespace,
+			Verb:      "get",
+			Group:     kapi.GroupName,
+			Resource:  "secrets",
+		}); err != nil {
+			return nil, api.Forbidden(err)
+		}
+
+		existingSec, err := b.kc.Core().Secrets(namespace).Get(secret.Name, metav1.GetOptions{})
 		if err == nil && reflect.DeepEqual(secret.Data, existingSec.Data) {
 			return existingSec, nil
 		}
@@ -49,26 +72,49 @@ func (b *Broker) ensureSecret(impersonatedKC internalversion.SecretsGetter, name
 	return nil, api.InternalServerError(err)
 }
 
-func (b *Broker) ensureTemplateInstance(impersonatedTemplateclient internalversiontemplate.TemplateInterface, namespace string, instanceID string, template *templateapi.Template, secret *kapi.Secret, impersonate string, didWork *bool) (*templateapi.TemplateInstance, *api.Response) {
+// ensureTemplateInstance ensures the existence of a TemplateInstance object
+// (this causes the template instance controller to instantiate the template in
+// the namespace).
+func (b *Broker) ensureTemplateInstance(u user.Info, namespace string, instanceID string, template *templateapi.Template, secret *kapi.Secret, didWork *bool) (*templateapi.TemplateInstance, *api.Response) {
+	glog.V(4).Infof("Template service broker: ensureTemplateInstance")
+
 	templateInstance := &templateapi.TemplateInstance{
-		ObjectMeta: kapi.ObjectMeta{Name: instanceID},
+		ObjectMeta: metav1.ObjectMeta{Name: instanceID},
 		Spec: templateapi.TemplateInstanceSpec{
 			Template: *template,
 			Secret:   kapi.LocalObjectReference{Name: secret.Name},
 			Requester: &templateapi.TemplateInstanceRequester{
-				Username: impersonate,
+				Username: u.GetName(),
 			},
 		},
 	}
 
-	createdTemplateInstance, err := impersonatedTemplateclient.TemplateInstances(namespace).Create(templateInstance)
+	if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+		Namespace: namespace,
+		Verb:      "create",
+		Group:     templateapi.GroupName,
+		Resource:  "templateinstances",
+	}); err != nil {
+		return nil, api.Forbidden(err)
+	}
+
+	createdTemplateInstance, err := b.templateclient.TemplateInstances(namespace).Create(templateInstance)
 	if err == nil {
 		*didWork = true
 		return createdTemplateInstance, nil
 	}
 
 	if kerrors.IsAlreadyExists(err) {
-		existingTemplateInstance, err := impersonatedTemplateclient.TemplateInstances(namespace).Get(templateInstance.Name)
+		if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+			Namespace: namespace,
+			Verb:      "get",
+			Group:     templateapi.GroupName,
+			Resource:  "templateinstances",
+		}); err != nil {
+			return nil, api.Forbidden(err)
+		}
+
+		existingTemplateInstance, err := b.templateclient.TemplateInstances(namespace).Get(templateInstance.Name, metav1.GetOptions{})
 		if err == nil && reflect.DeepEqual(templateInstance.Spec, existingTemplateInstance.Spec) {
 			return existingTemplateInstance, nil
 		}
@@ -82,9 +128,17 @@ func (b *Broker) ensureTemplateInstance(impersonatedTemplateclient internalversi
 	return nil, api.InternalServerError(err)
 }
 
+// ensureBrokerTemplateInstanceUIDs ensures the UIDs of the namespaced Secret
+// and TemplateInstance objects are set in the BrokerTemplateInstance object, as
+// proof that we are done.
 func (b *Broker) ensureBrokerTemplateInstanceUIDs(brokerTemplateInstance *templateapi.BrokerTemplateInstance, secret *kapi.Secret, templateInstance *templateapi.TemplateInstance, didWork *bool) (*templateapi.BrokerTemplateInstance, *api.Response) {
+	glog.V(4).Infof("Template service broker: ensureBrokerTemplateInstanceUIDs")
+
 	brokerTemplateInstance.Spec.Secret.UID = secret.UID
 	brokerTemplateInstance.Spec.TemplateInstance.UID = templateInstance.UID
+
+	// there is no SAR here because end users are not expected to have access to
+	// BrokerTemplateInstance objects.
 
 	brokerTemplateInstance, err := b.templateclient.BrokerTemplateInstances().Update(brokerTemplateInstance)
 	if err == nil {
@@ -95,9 +149,14 @@ func (b *Broker) ensureBrokerTemplateInstanceUIDs(brokerTemplateInstance *templa
 	return nil, api.InternalServerError(err)
 }
 
+// ensureBrokerTemplateInstance ensures the existence of BrokerTemplateInstance
+// object (records intent, globally maps instanceID to namespaced Secret and
+// TemplateInstance objects).
 func (b *Broker) ensureBrokerTemplateInstance(namespace, instanceID string, didWork *bool) (*templateapi.BrokerTemplateInstance, *api.Response) {
+	glog.V(4).Infof("Template service broker: ensureBrokerTemplateInstance")
+
 	brokerTemplateInstance := &templateapi.BrokerTemplateInstance{
-		ObjectMeta: kapi.ObjectMeta{Name: instanceID},
+		ObjectMeta: metav1.ObjectMeta{Name: instanceID},
 		Spec: templateapi.BrokerTemplateInstanceSpec{
 			TemplateInstance: kapi.ObjectReference{
 				Kind:      "TemplateInstance",
@@ -112,6 +171,9 @@ func (b *Broker) ensureBrokerTemplateInstance(namespace, instanceID string, didW
 		},
 	}
 
+	// there is no SAR here because end users are not expected to have access to
+	// BrokerTemplateInstance objects.
+
 	newBrokerTemplateInstance, err := b.templateclient.BrokerTemplateInstances().Create(brokerTemplateInstance)
 	if err == nil {
 		*didWork = true
@@ -119,7 +181,7 @@ func (b *Broker) ensureBrokerTemplateInstance(namespace, instanceID string, didW
 	}
 
 	if kerrors.IsAlreadyExists(err) {
-		existingBrokerTemplateInstance, err := b.templateclient.BrokerTemplateInstances().Get(brokerTemplateInstance.Name)
+		existingBrokerTemplateInstance, err := b.templateclient.BrokerTemplateInstances().Get(brokerTemplateInstance.Name, metav1.GetOptions{})
 		if err == nil && reflect.DeepEqual(brokerTemplateInstance.Spec, existingBrokerTemplateInstance.Spec) {
 			return existingBrokerTemplateInstance, nil
 		}
@@ -130,56 +192,102 @@ func (b *Broker) ensureBrokerTemplateInstance(namespace, instanceID string, didW
 	return nil, api.InternalServerError(err)
 }
 
+// Provision instantiates a template from a ProvisionRequest, via the OpenShift
+// TemplateInstance API.
 func (b *Broker) Provision(instanceID string, preq *api.ProvisionRequest) *api.Response {
+	glog.V(4).Infof("Template service broker: Provision: instanceID %s", instanceID)
+
 	if errs := ValidateProvisionRequest(preq); len(errs) > 0 {
 		return api.BadRequest(errs.ToAggregate())
 	}
 
 	namespace := preq.Parameters[templateapi.NamespaceParameterKey]
 	impersonate := preq.Parameters[templateapi.RequesterUsernameParameterKey]
+	u := &user.DefaultInfo{Name: impersonate}
 
-	impersonatedKC, _, impersonatedTemplateclient, err := b.getClientsForUsername(impersonate)
-	if err != nil {
-		return api.InternalServerError(err)
-	}
-
-	template, err := b.lister.GetTemplateByUID(preq.ServiceID)
-	if err != nil {
+	template, err := b.lister.GetByUID(preq.ServiceID)
+	if err != nil && !kerrors.IsNotFound(err) {
 		return api.BadRequest(err)
 	}
 	if template == nil {
+		// If the template is not found, it is just possible that it is because
+		// the cache is out of date.  To be sure, fall back to O(N) search of
+		// templates in configured namespace(s).
+		glog.V(4).Infof("Template service broker: GetByUID didn't template %s", preq.ServiceID)
+
+	out:
+		for namespace := range b.templateNamespaces {
+			templates, err := b.lister.Templates(namespace).List(labels.Everything())
+			if err != nil {
+				return api.InternalServerError(err)
+			}
+			for _, t := range templates {
+				if string(t.UID) == preq.ServiceID {
+					template = t
+					break out
+				}
+			}
+		}
+	}
+	if template == nil {
+		glog.V(4).Infof("Template service broker: template %s not found", preq.ServiceID)
+		return api.BadRequest(kerrors.NewNotFound(templateapi.Resource("templates"), preq.ServiceID))
+	}
+	if _, ok := b.templateNamespaces[template.Namespace]; !ok {
 		return api.BadRequest(kerrors.NewNotFound(templateapi.Resource("templates"), preq.ServiceID))
 	}
 
-	lsar := authorizationapi.AddUserToLSAR(&user.DefaultInfo{Name: impersonate},
-		&authorizationapi.LocalSubjectAccessReview{
-			Action: authorizationapi.Action{
-				Verb:     "create",
-				Group:    templateapi.GroupName,
-				Resource: "templateinstances",
-			},
-		})
-	lsarResp, err := b.localSAR.LocalSubjectAccessReviews(namespace).Create(lsar)
-	if err != nil || lsarResp == nil || !lsarResp.Allowed {
-		if err == nil {
-			err = errors.New("forbidden")
+	// TODO: enable SAR for template - at the moment I think this doesn't work
+	// properly because group information isn't populated in u.
+	/*
+		if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+			Namespace: template.Namespace,
+			Verb:      "get",
+			Group:     templateapi.GroupName,
+			Resource:  "templates",
+		}); err != nil {
+			return api.Forbidden(err)
 		}
-		return api.Forbidden(kerrors.NewForbidden(templateapi.LegacyResource("templateinstances"), instanceID, err))
+	*/
+
+	if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorization.ResourceAttributes{
+		Namespace: namespace,
+		Verb:      "create",
+		Group:     templateapi.GroupName,
+		Resource:  "templateinstances",
+	}); err != nil {
+		return api.Forbidden(err)
 	}
 
+	// The OSB API requires this function to be idempotent (restartable).  Thus
+	// each sub-step is intended to succeed if it sets the desired state, or if
+	// the desired state is already set.  didWork tracks if any actual change
+	// was made (if so, per the spec, StatusAccepted is returned, else
+	// StatusOK).
+
 	didWork := false
+
+	// The flow is as follows:
+	// 1. Ensure existence of BrokerTemplateInstance (records intent, globally
+	// maps instanceID to namespaced Secret and TemplateInstance objects).
+	// 2. Ensure existence of Secret containing template configuration
+	// parameters.
+	// 3. Ensure existence of TemplateInstance object (this causes the template
+	// instance controller to instantiate the template in the namespace).
+	// 4. Ensure the UIDs of the namespaced Secret and TemplateInstance objects
+	// are set in the BrokerTemplateInstance object, as proof that we are done.
 
 	brokerTemplateInstance, resp := b.ensureBrokerTemplateInstance(namespace, instanceID, &didWork)
 	if resp != nil {
 		return resp
 	}
 
-	secret, resp := b.ensureSecret(impersonatedKC.Core(), namespace, instanceID, preq, &didWork)
+	secret, resp := b.ensureSecret(u, namespace, instanceID, preq, &didWork)
 	if resp != nil {
 		return resp
 	}
 
-	templateInstance, resp := b.ensureTemplateInstance(impersonatedTemplateclient.Template(), namespace, instanceID, template, secret, impersonate, &didWork)
+	templateInstance, resp := b.ensureTemplateInstance(u, namespace, instanceID, template, secret, &didWork)
 	if resp != nil {
 		return resp
 	}

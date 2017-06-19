@@ -3,14 +3,17 @@ package servicebroker
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
 	"github.com/openshift/origin/pkg/openservicebroker/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
 	templatevalidation "github.com/openshift/origin/pkg/template/api/validation"
 	uservalidation "github.com/openshift/origin/pkg/user/api/validation"
-	"k8s.io/kubernetes/pkg/api/validation"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 )
 
+// ValidateProvisionRequest ensures that a ProvisionRequest is valid, beyond
+// the validation carried out by the service broker framework itself.
 func ValidateProvisionRequest(preq *api.ProvisionRequest) field.ErrorList {
 	var allErrs field.ErrorList
 
@@ -28,6 +31,8 @@ func ValidateProvisionRequest(preq *api.ProvisionRequest) field.ErrorList {
 	return allErrs
 }
 
+// ValidateBindRequest ensures that a BindRequest is valid, beyond the
+// validation carried out by the service broker framework itself.
 func ValidateBindRequest(breq *api.BindRequest) field.ErrorList {
 	var allErrs field.ErrorList
 

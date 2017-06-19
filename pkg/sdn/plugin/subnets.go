@@ -7,13 +7,13 @@ import (
 
 	log "github.com/golang/glog"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kapiunversioned "k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/cache"
 	"k8s.io/kubernetes/pkg/client/retry"
-	"k8s.io/kubernetes/pkg/types"
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
-	utilwait "k8s.io/kubernetes/pkg/util/wait"
 
 	osapi "github.com/openshift/origin/pkg/sdn/api"
 	"github.com/openshift/origin/pkg/util/netutils"
@@ -21,7 +21,7 @@ import (
 
 func (master *OsdnMaster) SubnetStartMaster(clusterNetwork *net.IPNet, hostSubnetLength uint32) error {
 	subrange := make([]string, 0)
-	subnets, err := master.osClient.HostSubnets().List(kapi.ListOptions{})
+	subnets, err := master.osClient.HostSubnets().List(metav1.ListOptions{})
 	if err != nil {
 		log.Errorf("Error in initializing/fetching subnets: %v", err)
 		return err
@@ -41,7 +41,7 @@ func (master *OsdnMaster) SubnetStartMaster(clusterNetwork *net.IPNet, hostSubne
 		return err
 	}
 
-	go utilwait.Forever(master.watchNodes, 0)
+	master.watchNodes()
 	go utilwait.Forever(master.watchSubnets, 0)
 	return nil
 }
@@ -56,7 +56,7 @@ func (master *OsdnMaster) addNode(nodeName string, nodeIP string, hsAnnotations 
 	}
 
 	// Check if subnet needs to be created or updated
-	sub, err := master.osClient.HostSubnets().Get(nodeName)
+	sub, err := master.osClient.HostSubnets().Get(nodeName, metav1.GetOptions{})
 	if err == nil {
 		if sub.HostIP == nodeIP {
 			return nodeIP, nil
@@ -81,8 +81,8 @@ func (master *OsdnMaster) addNode(nodeName string, nodeIP string, hsAnnotations 
 	}
 
 	sub = &osapi.HostSubnet{
-		TypeMeta:   kapiunversioned.TypeMeta{Kind: "HostSubnet"},
-		ObjectMeta: kapi.ObjectMeta{Name: nodeName, Annotations: hsAnnotations},
+		TypeMeta:   metav1.TypeMeta{Kind: "HostSubnet"},
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: hsAnnotations},
 		Host:       nodeName,
 		HostIP:     nodeIP,
 		Subnet:     sn.String(),
@@ -97,7 +97,7 @@ func (master *OsdnMaster) addNode(nodeName string, nodeIP string, hsAnnotations 
 }
 
 func (master *OsdnMaster) deleteNode(nodeName string) error {
-	sub, err := master.osClient.HostSubnets().Get(nodeName)
+	sub, err := master.osClient.HostSubnets().Get(nodeName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("error fetching subnet for node %q for deletion: %v", nodeName, err)
 	}
@@ -140,7 +140,7 @@ func (master *OsdnMaster) clearInitialNodeNetworkUnavailableCondition(node *kapi
 		var err error
 
 		if knode != node {
-			knode, err = master.kClient.Nodes().Get(node.ObjectMeta.Name)
+			knode, err = master.kClient.Core().Nodes().Get(node.ObjectMeta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
@@ -152,8 +152,8 @@ func (master *OsdnMaster) clearInitialNodeNetworkUnavailableCondition(node *kapi
 			condition.Status = kapi.ConditionFalse
 			condition.Reason = "RouteCreated"
 			condition.Message = "openshift-sdn cleared kubelet-set NoRouteCreated"
-			condition.LastTransitionTime = kapiunversioned.Now()
-			knode, err = master.kClient.Nodes().UpdateStatus(knode)
+			condition.LastTransitionTime = metav1.Now()
+			knode, err = master.kClient.Core().Nodes().UpdateStatus(knode)
 			if err == nil {
 				cleared = true
 			}
@@ -168,43 +168,42 @@ func (master *OsdnMaster) clearInitialNodeNetworkUnavailableCondition(node *kapi
 }
 
 func (master *OsdnMaster) watchNodes() {
-	nodeAddressMap := map[types.UID]string{}
-	RunEventQueue(master.kClient.CoreClient.RESTClient(), Nodes, func(delta cache.Delta) error {
-		node := delta.Object.(*kapi.Node)
-		name := node.ObjectMeta.Name
-		uid := node.ObjectMeta.UID
+	RegisterSharedInformerEventHandlers(master.informers.InternalKubernetesInformers(),
+		master.handleAddOrUpdateNode, master.handleDeleteNode, Nodes)
+}
 
-		nodeIP, err := getNodeIP(node)
-		if err != nil {
-			return fmt.Errorf("failed to get node IP for %s, skipping event: %v, node: %v", name, delta.Type, node)
-		}
+func (master *OsdnMaster) handleAddOrUpdateNode(obj, _ interface{}, eventType watch.EventType) {
+	node := obj.(*kapi.Node)
+	nodeIP, err := getNodeIP(node)
+	if err != nil {
+		log.Errorf("Failed to get node IP for node %s, skipping %s event, node: %v", node.Name, eventType, node)
+		return
+	}
+	master.clearInitialNodeNetworkUnavailableCondition(node)
 
-		switch delta.Type {
-		case cache.Sync, cache.Added, cache.Updated:
-			master.clearInitialNodeNetworkUnavailableCondition(node)
+	if oldNodeIP, ok := master.hostSubnetNodeIPs[node.UID]; ok && ((nodeIP == oldNodeIP) || isValidNodeIP(node.Status.Addresses, oldNodeIP)) {
+		return
+	}
+	// Node status is frequently updated by kubelet, so log only if the above condition is not met
+	log.V(5).Infof("Watch %s event for Node %q", eventType, node.Name)
 
-			if oldNodeIP, ok := nodeAddressMap[uid]; ok && ((nodeIP == oldNodeIP) || isValidNodeIP(node.Status.Addresses, oldNodeIP)) {
-				break
-			}
-			// Node status is frequently updated by kubelet, so log only if the above condition is not met
-			log.V(5).Infof("Watch %s event for Node %q", delta.Type, name)
+	usedNodeIP, err := master.addNode(node.Name, nodeIP, nil, node.Status.Addresses)
+	if err != nil {
+		log.Errorf("Error creating subnet for node %s, ip %s: %v", node.Name, nodeIP, err)
+		return
+	}
+	master.hostSubnetNodeIPs[node.UID] = usedNodeIP
+}
 
-			usedNodeIP, err := master.addNode(name, nodeIP, nil, node.Status.Addresses)
-			if err != nil {
-				return fmt.Errorf("error creating subnet for node %s, ip %s: %v", name, nodeIP, err)
-			}
-			nodeAddressMap[uid] = usedNodeIP
-		case cache.Deleted:
-			log.V(5).Infof("Watch %s event for Node %q", delta.Type, name)
-			delete(nodeAddressMap, uid)
+func (master *OsdnMaster) handleDeleteNode(obj interface{}) {
+	node := obj.(*kapi.Node)
+	log.V(5).Infof("Watch %s event for Node %q", watch.Deleted, node.Name)
+	delete(master.hostSubnetNodeIPs, node.UID)
 
-			err = master.deleteNode(name)
-			if err != nil {
-				return fmt.Errorf("error deleting node %s: %v", name, err)
-			}
-		}
-		return nil
-	})
+	if err := master.deleteNode(node.Name); err != nil {
+		log.Errorf("Error deleting node %s: %v", node.Name, err)
+		return
+	}
 }
 
 func (node *OsdnNode) SubnetStartNode() error {

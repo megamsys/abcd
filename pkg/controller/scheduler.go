@@ -3,10 +3,8 @@ package controller
 import (
 	"sync"
 
-	"github.com/golang/glog"
-
-	"k8s.io/kubernetes/pkg/util/flowcontrol"
-	utilwait "k8s.io/kubernetes/pkg/util/wait"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // Scheduler is a self-balancing, rate-limited, bucketed queue that can periodically invoke
@@ -53,11 +51,9 @@ func (s *Scheduler) RunUntil(ch <-chan struct{}) {
 func (s *Scheduler) RunOnce() {
 	key, value, last := s.next()
 	if last {
-		glog.V(5).Infof("DEBUG: scheduler: waiting for limit")
 		s.limiter.Accept()
 		return
 	}
-	glog.V(5).Infof("DEBUG: scheduler: handle %s", key)
 	s.handle(key, value)
 }
 
@@ -71,12 +67,10 @@ func (s *Scheduler) at(inc int) int {
 func (s *Scheduler) next() (interface{}, interface{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	glog.V(5).Infof("DEBUG: scheduler: queue (%d):\n %#v", s.position, s.buckets)
 
 	last := s.buckets[s.position]
 	if len(last) == 0 {
 		s.position = s.at(1)
-		glog.V(5).Infof("DEBUG: scheduler: position: %d %d", s.position, len(s.buckets))
 		last = s.buckets[s.position]
 	}
 

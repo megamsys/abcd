@@ -181,7 +181,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
             },
             "from": {
               "kind": "ImageStreamTag",
-              "name": "4"
+              "name": "6"
             }
           },
           {
@@ -214,6 +214,22 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
             "from": {
               "kind": "DockerImage",
               "name": "centos/nodejs-4-centos7:latest"
+            }
+          },
+          {
+            "name": "6",
+            "annotations": {
+              "openshift.io/display-name": "Node.js 6",
+              "description": "Build and run Node.js 6 applications on CentOS 7. For more information about using this builder image, including OpenShift considerations, see https://github.com/sclorg/s2i-nodejs-container/blob/master/6/README.md.",
+              "iconClass": "icon-nodejs",
+              "tags": "builder,nodejs",
+              "supports":"nodejs:6,nodejs",
+              "version": "6",
+              "sampleRepo": "https://github.com/openshift/nodejs-ex.git"
+            },
+            "from": {
+              "kind": "DockerImage",
+              "name": "centos/nodejs-6-centos7:latest"
             }
           }
         ]
@@ -485,7 +501,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
               "iconClass": "icon-wildfly",
               "tags": "builder,wildfly,java",
               "supports":"jee,java",
-              "sampleRepo": "https://github.com/bparees/openshift-jee-sample.git"
+              "sampleRepo": "https://github.com/openshift/openshift-jee-sample.git"
             },
             "from": {
               "kind": "ImageStreamTag",
@@ -501,7 +517,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
               "tags": "builder,wildfly,java",
               "supports":"wildfly:8.1,jee,java",
               "version": "8.1",
-              "sampleRepo": "https://github.com/bparees/openshift-jee-sample.git"
+              "sampleRepo": "https://github.com/openshift/openshift-jee-sample.git"
             },
             "from": {
               "kind": "DockerImage",
@@ -517,7 +533,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
               "tags": "builder,wildfly,java",
               "supports":"wildfly:9.0,jee,java",
               "version": "9.0",
-              "sampleRepo": "https://github.com/bparees/openshift-jee-sample.git"
+              "sampleRepo": "https://github.com/openshift/openshift-jee-sample.git"
             },
             "from": {
               "kind": "DockerImage",
@@ -533,7 +549,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
               "tags": "builder,wildfly,java",
               "supports":"wildfly:10.0,jee,java",
               "version": "10.0",
-              "sampleRepo": "https://github.com/bparees/openshift-jee-sample.git"
+              "sampleRepo": "https://github.com/openshift/openshift-jee-sample.git"
             },
             "from": {
               "kind": "DockerImage",
@@ -549,7 +565,7 @@ var _examplesImageStreamsImageStreamsCentos7Json = []byte(`{
               "tags": "builder,wildfly,java",
               "supports":"wildfly:10.1,jee,java",
               "version": "10.1",
-              "sampleRepo": "https://github.com/bparees/openshift-jee-sample.git"
+              "sampleRepo": "https://github.com/openshift/openshift-jee-sample.git"
             },
             "from": {
               "kind": "DockerImage",
@@ -1027,7 +1043,7 @@ var _examplesImageStreamsImageStreamsRhel7Json = []byte(`{
             },
             "from": {
               "kind": "ImageStreamTag",
-              "name": "4"
+              "name": "6"
             }
           },
           {
@@ -1060,6 +1076,22 @@ var _examplesImageStreamsImageStreamsRhel7Json = []byte(`{
             "from": {
               "kind": "DockerImage",
               "name": "registry.access.redhat.com/rhscl/nodejs-4-rhel7:latest"
+            }
+          },
+          {
+            "name": "6",
+            "annotations": {
+              "openshift.io/display-name": "Node.js 6",
+              "description": "Build and run Node.js 6 applications on RHEL 7. For more information about using this builder image, including OpenShift considerations, see https://github.com/sclorg/s2i-nodejs-container.",
+              "iconClass": "icon-nodejs",
+              "tags": "builder,nodejs",
+              "supports":"nodejs:6,nodejs",
+              "version": "6",
+              "sampleRepo": "https://github.com/openshift/nodejs-ex.git"
+            },
+            "from": {
+              "kind": "DockerImage",
+              "name": "registry.access.redhat.com/rhscl/nodejs-6-rhel7:latest"
             }
           }
         ]
@@ -1177,7 +1209,7 @@ var _examplesImageStreamsImageStreamsRhel7Json = []byte(`{
               "tags": "hidden,builder,php",
               "supports":"php:5.5,php",
               "version": "5.5",
-              "sampleRepo": "https://github.com/openshift/cakephp-ex.git"              
+              "sampleRepo": "https://github.com/openshift/cakephp-ex.git"
             },
             "from": {
               "kind": "DockerImage",
@@ -4999,43 +5031,52 @@ objects:
     strategy:
       jenkinsPipelineStrategy:
         jenkinsfile: |-
-          def appName="${NAME}"
-          def project=""
-          def tag="blue"
-          def altTag="green"
-          def verbose="${VERBOSE}"
-
-          node {
-            project = env.PROJECT_NAME
-            stage("Initialize") {
-              sh "oc get route ${appName} -n ${project} -o jsonpath='{ .spec.to.name }' --loglevel=4 > activeservice"
-              activeService = readFile('activeservice').trim()
-              if (activeService == "${appName}-blue") {
-                tag = "green"
-                altTag = "blue"
-              }
-              sh "oc get route ${tag}-${appName} -n ${project} -o jsonpath='{ .spec.host }' --loglevel=4 > routehost"
-              routeHost = readFile('routehost').trim()
-            }
-
-            stage("Build") {
-              echo "building tag ${tag}"
-              openshiftBuild buildConfig: appName, showBuildLogs: "true", verbose: verbose
-            }
-
-            stage("Deploy Test") {
-              openshiftTag srcStream: appName, srcTag: 'latest', destinationStream: appName, destinationTag: tag, verbose: verbose
-              openshiftVerifyDeployment deploymentConfig: "${appName}-${tag}", verbose: verbose
-            }
-
-            stage("Test") {
-              input message: "Test deployment: http://${routeHost}. Approve?", id: "approval"
-            }
-
-            stage("Go Live") {
-              sh "oc set -n ${project} route-backends ${appName} ${appName}-${tag}=100 ${appName}-${altTag}=0 --loglevel=4"
-            }
-          }
+          try {
+             timeout(time: 20, unit: 'MINUTES') {
+                def appName="${NAME}"
+                def project=""
+                def tag="blue"
+                def altTag="green"
+                def verbose="${VERBOSE}"
+        
+                node {
+                  project = env.PROJECT_NAME
+                  stage("Initialize") {
+                    sh "oc get route ${appName} -n ${project} -o jsonpath='{ .spec.to.name }' --loglevel=4 > activeservice"
+                    activeService = readFile('activeservice').trim()
+                    if (activeService == "${appName}-blue") {
+                      tag = "green"
+                      altTag = "blue"
+                    }
+                    sh "oc get route ${tag}-${appName} -n ${project} -o jsonpath='{ .spec.host }' --loglevel=4 > routehost"
+                    routeHost = readFile('routehost').trim()
+                  }
+        
+                  stage("Build") {
+                    echo "building tag ${tag}"
+                    openshiftBuild buildConfig: appName, showBuildLogs: "true", verbose: verbose
+                  }
+        
+                  stage("Deploy Test") {
+                    openshiftTag srcStream: appName, srcTag: 'latest', destinationStream: appName, destinationTag: tag, verbose: verbose
+                    openshiftVerifyDeployment deploymentConfig: "${appName}-${tag}", verbose: verbose
+                  }
+        
+                  stage("Test") {
+                    input message: "Test deployment: http://${routeHost}. Approve?", id: "approval"
+                  }
+        
+                  stage("Go Live") {
+                    sh "oc set -n ${project} route-backends ${appName} ${appName}-${tag}=100 ${appName}-${altTag}=0 --loglevel=4"
+                  }
+                }
+             }
+          } catch (err) {
+             echo "in catch block"
+             echo "Caught: ${err}"
+             currentBuild.result = 'FAILURE'
+             throw err
+          }          
       type: JenkinsPipeline
     triggers:
     - github:
@@ -5497,52 +5538,61 @@ objects:
       type: JenkinsPipeline
       jenkinsPipelineStrategy:
         jenkinsfile: |-
-          def project = ""
-          node {
-            project = "${env.PROJECT_NAME}"
-
-            stage('Create NationalParks back-end') {
-              def nationalParksURL = "${NATIONALPARKS_GIT_URI}"
-              def nationalParksBranch = "${NATIONALPARKS_GIT_REF}"
-              checkout([$class: "GitSCM", branches: [[name: "*/${nationalParksBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "nationalparks"]], submoduleCfg: [], userRemoteConfigs: [[url: "${nationalParksURL}"]]])
-              sh "oc new-app -f nationalparks/ose3/pipeline-buildconfig-template.json -p GIT_URI=${nationalParksURL} -p GIT_REF=${nationalParksBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
-            }
-
-            stage('Create MLBParks back-end') {
-              def mlbParksURL = "${MLBPARKS_GIT_URI}"
-              def mlbParksBranch = "${MLBPARKS_GIT_REF}"
-              checkout([$class: "GitSCM", branches: [[name: "*/${mlbParksBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "mlbparks"]], submoduleCfg: [], userRemoteConfigs: [[url: "${mlbParksURL}"]]])
-              sh "oc new-app -f mlbparks/ose3/pipeline-buildconfig-template.json -p GIT_URI=${mlbParksURL} -p GIT_REF=${mlbParksBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
-            }
-
-            stage('Create ParksMap front-end') {
-              def parksMapURL = "${PARKSMAP_GIT_URI}"
-              def parksMapBranch = "${PARKSMAP_GIT_REF}"
-              checkout([$class: "GitSCM", branches: [[name: "*/${parksMapBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "parksmap"]], submoduleCfg: [], userRemoteConfigs: [[url: "${parksMapURL}"]]])
-              sh "oc new-app -f parksmap/ose3/pipeline-buildconfig-template.json -p GIT_URI=${parksMapURL} -p GIT_REF=${parksMapBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
-            }
-          }
-
-          stage('Build Back-ends') {
-            parallel (
-              "nationalparks": {
+          try {
+             timeout(time: 20, unit: 'MINUTES') {
+                def project = ""
                 node {
-                  openshiftBuild buildConfig: "nationalparks-pipeline", namespace: project
+                  project = "${env.PROJECT_NAME}"
+        
+                  stage('Create NationalParks back-end') {
+                    def nationalParksURL = "${NATIONALPARKS_GIT_URI}"
+                    def nationalParksBranch = "${NATIONALPARKS_GIT_REF}"
+                    checkout([$class: "GitSCM", branches: [[name: "*/${nationalParksBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "nationalparks"]], submoduleCfg: [], userRemoteConfigs: [[url: "${nationalParksURL}"]]])
+                    sh "oc new-app -f nationalparks/ose3/pipeline-buildconfig-template.json -p GIT_URI=${nationalParksURL} -p GIT_REF=${nationalParksBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
+                  }
+        
+                  stage('Create MLBParks back-end') {
+                    def mlbParksURL = "${MLBPARKS_GIT_URI}"
+                    def mlbParksBranch = "${MLBPARKS_GIT_REF}"
+                    checkout([$class: "GitSCM", branches: [[name: "*/${mlbParksBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "mlbparks"]], submoduleCfg: [], userRemoteConfigs: [[url: "${mlbParksURL}"]]])
+                    sh "oc new-app -f mlbparks/ose3/pipeline-buildconfig-template.json -p GIT_URI=${mlbParksURL} -p GIT_REF=${mlbParksBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
+                  }
+        
+                  stage('Create ParksMap front-end') {
+                    def parksMapURL = "${PARKSMAP_GIT_URI}"
+                    def parksMapBranch = "${PARKSMAP_GIT_REF}"
+                    checkout([$class: "GitSCM", branches: [[name: "*/${parksMapBranch}"]], doGenerateSubmoduleConfigurations: false, extensions: [[$class: "RelativeTargetDirectory", relativeTargetDir: "parksmap"]], submoduleCfg: [], userRemoteConfigs: [[url: "${parksMapURL}"]]])
+                    sh "oc new-app -f parksmap/ose3/pipeline-buildconfig-template.json -p GIT_URI=${parksMapURL} -p GIT_REF=${parksMapBranch} -n ${project} --dry-run -o yaml | oc apply -f - -n ${project}"
+                  }
                 }
-              },
-              "mlbparks": {
+        
+                stage('Build Back-ends') {
+                  parallel (
+                    "nationalparks": {
+                      node {
+                        openshiftBuild buildConfig: "nationalparks-pipeline", namespace: project
+                      }
+                    },
+                    "mlbparks": {
+                      node {
+                        openshiftBuild buildConfig: "mlbparks-pipeline", namespace: project
+                      }
+                    }
+                  )
+                }
+        
                 node {
-                  openshiftBuild buildConfig: "mlbparks-pipeline", namespace: project
+                  stage('Build Front-end') {
+                    openshiftBuild buildConfig: "parksmap-pipeline", namespace: project
+                  }
                 }
-              }
-            )
-          }
-
-          node {
-            stage('Build Front-end') {
-              openshiftBuild buildConfig: "parksmap-pipeline", namespace: project
-            }
-          }
+             }
+          } catch (err) {
+             echo "in catch block"
+             echo "Caught: ${err}"
+             currentBuild.result = 'FAILURE'
+             throw err
+          }          
     triggers:
     - github:
         secret: ${GITHUB_TRIGGER_SECRET}
@@ -5581,7 +5631,7 @@ parameters:
   description: The source URL for the application
   displayName: Source URL
   required: true
-  value: https://github.com/bparees/openshift-jee-sample.git
+  value: https://github.com/openshift/openshift-jee-sample.git
 - name: GIT_SOURCE_REF
   description: The source Ref for the application
   displayName: Source Ref
@@ -5643,33 +5693,42 @@ objects:
     strategy:
       jenkinsPipelineStrategy:
         jenkinsfile: |-
-          def appName="${APP_NAME}"
-          def project=""
-
-          node {
-            stage("Initialize") {
-              project = env.PROJECT_NAME
-            }
-          }
-
-          node("maven") {
-            stage("Checkout") {
-              git url: "${GIT_SOURCE_URL}", branch: "${GIT_SOURCE_REF}"
-            }
-            stage("Build WAR") {
-              sh "mvn clean package -Popenshift"
-              stash name:"war", includes:"target/ROOT.war"
-            }
-          }
-
-          node {
-            stage("Build Image") {
-              unstash name:"war"
-              sh "oc start-build ${appName}-docker --from-file=target/ROOT.war --follow -n ${project}"
-            }
-            stage("Deploy") {
-              openshiftDeploy deploymentConfig: appName, namespace: project
-            }
+          try {
+             timeout(time: 20, unit: 'MINUTES') {
+                def appName="${APP_NAME}"
+                def project=""
+        
+                node {
+                  stage("Initialize") {
+                    project = env.PROJECT_NAME
+                  }
+                }
+        
+                node("maven") {
+                  stage("Checkout") {
+                    git url: "${GIT_SOURCE_URL}", branch: "${GIT_SOURCE_REF}"
+                  }
+                  stage("Build WAR") {
+                    sh "mvn clean package -Popenshift"
+                    stash name:"war", includes:"target/ROOT.war"
+                  }
+                }
+        
+                node {
+                  stage("Build Image") {
+                    unstash name:"war"
+                    sh "oc start-build ${appName}-docker --from-file=target/ROOT.war --follow -n ${project}"
+                  }
+                  stage("Deploy") {
+                    openshiftDeploy deploymentConfig: appName, namespace: project
+                  }
+                }
+             }
+          } catch (err) {
+             echo "in catch block"
+             echo "Caught: ${err}"
+             currentBuild.result = 'FAILURE'
+             throw err
           }
       type: JenkinsPipeline
     triggers:
@@ -5969,14 +6028,23 @@ objects:
     strategy:
       jenkinsPipelineStrategy:
         jenkinsfile: |-
-          node('nodejs') {
-            stage('build') {
-              openshiftBuild(buildConfig: '${NAME}', showBuildLogs: 'true')
-            }
-            stage('deploy') {
-              openshiftDeploy(deploymentConfig: '${NAME}')
-            }
-          }
+          try {
+             timeout(time: 20, unit: 'MINUTES') {
+                node('nodejs') {
+                    stage('build') {
+                      openshiftBuild(buildConfig: '${NAME}', showBuildLogs: 'true')
+                    }
+                    stage('deploy') {
+                      openshiftDeploy(deploymentConfig: '${NAME}')
+                    }
+                  }
+             }
+          } catch (err) {
+             echo "in catch block"
+             echo "Caught: ${err}"
+             currentBuild.result = 'FAILURE'
+             throw err
+          }          
       type: JenkinsPipeline
     triggers:
     - github:
@@ -7527,6 +7595,9 @@ var _examplesQuickstartsDancerMysqlPersistentJson = []byte(`{
         }
       },
       "spec": {
+        "strategy": {
+          "type": "Recreate"
+        },
         "triggers": [
           {
             "type": "ImageChange",
@@ -8067,6 +8138,9 @@ var _examplesQuickstartsDancerMysqlJson = []byte(`{
         }
       },
       "spec": {
+        "strategy": {
+          "type": "Recreate"
+        },
         "triggers": [
           {
             "type": "ImageChange",
@@ -8582,7 +8656,7 @@ var _examplesQuickstartsDjangoPostgresqlPersistentJson = []byte(`{
       },
       "spec": {
         "strategy": {
-          "type": "Rolling"
+          "type": "Recreate"
         },
         "triggers": [
           {
@@ -9135,7 +9209,7 @@ var _examplesQuickstartsDjangoPostgresqlJson = []byte(`{
       },
       "spec": {
         "strategy": {
-          "type": "Rolling"
+          "type": "Recreate"
         },
         "triggers": [
           {
@@ -9668,7 +9742,7 @@ var _examplesQuickstartsNodejsMongodbPersistentJson = []byte(`{
       },
       "spec": {
         "strategy": {
-          "type": "Rolling"
+          "type": "Recreate"
         },
         "triggers": [
           {
@@ -10230,7 +10304,7 @@ var _examplesQuickstartsNodejsMongodbJson = []byte(`{
       },
       "spec": {
         "strategy": {
-          "type": "Rolling"
+          "type": "Recreate"
         },
         "triggers": [
           {
@@ -12301,7 +12375,7 @@ func examplesHeapsterHeapsterStandaloneYaml() (*asset, error) {
 	return a, nil
 }
 
-var _examplesPrometheusPrometheusYaml = []byte(`apiVersion: v1
+var _examplesPrometheusPrometheusYaml = []byte(`apiVersion: template.openshift.io/v1
 kind: Template
 metadata:
   name: prometheus
@@ -12315,13 +12389,26 @@ parameters:
 - description: The namespace to instantiate prometheus under. Defaults to 'kube-system'.
   name: NAMESPACE
   value: kube-system
+- description: The location of the proxy image
+  name: IMAGE_PROXY
+  value: registry.svc.ci.openshift.org/ci/oauth-proxy:latest
+- description: The location of the prometheus image
+  name: IMAGE_PROMETHEUS
+  value: registry.svc.ci.openshift.org/ci/prometheus:latest
+- description: The session secret for the proxy
+  name: SESSION_SECRET
+  generate: expression
+  from: "[a-zA-Z0-9]{43}"
 objects:
+# Authorize the prometheus service account to read data about the cluster
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
     name: prometheus
     namespace: "${NAMESPACE}"
-- apiVersion: v1
+    annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
+- apiVersion: authorization.openshift.io/v1
   kind: ClusterRoleBinding
   metadata:
     name: prometheus-cluster-reader
@@ -12331,11 +12418,24 @@ objects:
   - kind: ServiceAccount
     name: prometheus
     namespace: "${NAMESPACE}"
+# Create a fully end-to-end TLS connection to the proxy
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: prometheus
+    namespace: "${NAMESPACE}"
+  spec:
+    to:
+      name: prometheus
+    tls:
+      termination: Reencrypt
 - apiVersion: v1
   kind: Service
   metadata:
     annotations:
       prometheus.io/scrape: "true"
+      prometheus.io/scheme: https
+      service.alpha.openshift.io/serving-cert-secret-name: prometheus-tls
     labels:
       name: prometheus
     name: prometheus
@@ -12343,11 +12443,19 @@ objects:
   spec:
     ports:
     - name: prometheus
-      port: 80
+      port: 443
       protocol: TCP
-      targetPort: 9090
+      targetPort: 8443
     selector:
       app: prometheus
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: prometheus-proxy
+    namespace: "${NAMESPACE}"
+  stringData:
+    session_secret: "${SESSION_SECRET}="
+# Deploy Prometheus behind an oauth proxy
 - apiVersion: extensions/v1beta1
   kind: Deployment
   metadata:
@@ -12368,27 +12476,57 @@ objects:
       spec:
         serviceAccountName: prometheus
         containers:
-        - args:
+        - name: oauth-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: web
+          args:
+          - -https-address=:8443
+          - -email-domain=*
+          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
+          - -upstream=http://localhost:9090
+          - -provider=openshift
+          - -redirect-url=https:///oauth2/callback
+          - '-openshift-sar={"namespace": "${NAMESPACE}", "verb": "list", "resource": "services"}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -skip-auth-regex=^/metrics
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: prometheus-tls
+          - mountPath: /etc/proxy/secrets
+            name: secrets
+
+        - name: prometheus
+          args:
           - -storage.local.retention=6h
           - -storage.local.memory-chunks=500000
           - -config.file=/etc/prometheus/prometheus.yml
-          image: prom/prometheus
+          - -web.listen-address=localhost:9090
+          image: ${IMAGE_PROMETHEUS}
           imagePullPolicy: IfNotPresent
-          name: prometheus
-          ports:
-          - containerPort: 8080
-            name: web
           volumeMounts:
           - mountPath: /etc/prometheus
             name: config-volume
           - mountPath: /prometheus
             name: data-volume
+
         restartPolicy: Always
         volumes:
         - configMap:
             defaultMode: 420
             name: prometheus
           name: config-volume
+        - name: secrets
+          secret:
+            secretName: prometheus-proxy
+        - name: prometheus-tls
+          secret:
+            secretName: prometheus-tls
         - emptyDir: {}
           name: data-volume
 - apiVersion: v1
@@ -12490,6 +12628,11 @@ objects:
       # service then set this appropriately.
       - job_name: 'kubernetes-service-endpoints'
 
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          # TODO: this should be per target
+          insecure_skip_verify: true
+
         kubernetes_sd_configs:
         - role: endpoints
 
@@ -12510,6 +12653,14 @@ objects:
           target_label: __address__
           regex: (.+)(?::\d+);(\d+)
           replacement: $1:$2
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_username]
+          action: replace
+          target_label: __basic_auth_username__
+          regex: (.+)
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_password]
+          action: replace
+          target_label: __basic_auth_password__
+          regex: (.+)
         - action: labelmap
           regex: __meta_kubernetes_service_label_(.+)
         - source_labels: [__meta_kubernetes_namespace]

@@ -5,8 +5,9 @@ import (
 	"io"
 	"strings"
 
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	kubecmd "k8s.io/kubernetes/pkg/kubectl/cmd"
 
@@ -25,21 +26,24 @@ const (
 	NetworkDiagSCCNamePrefix         = "network-diag-privileged"
 	NetworkDiagSecretName            = "network-diag-secret"
 
-	NetworkDiagTestPodNamePrefix     = "network-diag-test-pod"
-	NetworkDiagTestServiceNamePrefix = "network-diag-test-service"
-	NetworkDiagContainerMountPath    = "/host"
-	NetworkDiagDefaultLogDir         = "/tmp/openshift/"
-	NetworkDiagNodeLogDirPrefix      = "/nodes"
-	NetworkDiagMasterLogDirPrefix    = "/master"
-	NetworkDiagPodLogDirPrefix       = "/pods"
+	NetworkDiagTestPodNamePrefix      = "network-diag-test-pod"
+	NetworkDiagTestServiceNamePrefix  = "network-diag-test-service"
+	NetworkDiagContainerMountPath     = "/host"
+	NetworkDiagDefaultLogDir          = "/tmp/openshift/"
+	NetworkDiagNodeLogDirPrefix       = "/nodes"
+	NetworkDiagMasterLogDirPrefix     = "/master"
+	NetworkDiagPodLogDirPrefix        = "/pods"
+	NetworkDiagDefaultTestPodProtocol = string(kapi.ProtocolTCP)
+	NetworkDiagDefaultTestPodPort     = 8080
 )
 
 var (
-	NetworkDiagDefaultPodImage = variable.DefaultImagePrefix
+	NetworkDiagDefaultPodImage     = variable.DefaultImagePrefix
+	NetworkDiagDefaultTestPodImage = variable.DefaultImagePrefix + "-deployer"
 )
 
 func GetOpenShiftNetworkPlugin(osClient *osclient.Client) (string, bool, error) {
-	cn, err := osClient.ClusterNetwork().Get(api.ClusterNetworkDefault)
+	cn, err := osClient.ClusterNetwork().Get(api.ClusterNetworkDefault, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
 			return "", false, nil
@@ -50,7 +54,7 @@ func GetOpenShiftNetworkPlugin(osClient *osclient.Client) (string, bool, error) 
 }
 
 func GetNodes(kubeClient kclientset.Interface) ([]kapi.Node, error) {
-	nodeList, err := kubeClient.Core().Nodes().List(kapi.ListOptions{})
+	nodeList, err := kubeClient.Core().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("Listing nodes in the cluster failed. Error: %s", err)
 	}
@@ -89,7 +93,7 @@ func GetSchedulableNodes(kubeClient kclientset.Interface) ([]kapi.Node, error) {
 }
 
 func GetLocalNode(kubeClient kclientset.Interface) (string, string, error) {
-	nodeList, err := kubeClient.Core().Nodes().List(kapi.ListOptions{})
+	nodeList, err := kubeClient.Core().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		return "", "", err
 	}
@@ -204,7 +208,7 @@ func Execute(factory *osclientcmd.Factory, command []string, pod *kapi.Pod, in i
 			Stdin:         in != nil,
 		},
 		Executor:  &kubecmd.DefaultRemoteExecutor{},
-		PodClient: client,
+		PodClient: client.Core(),
 		Config:    config,
 		Command:   command,
 	}
@@ -216,7 +220,7 @@ func Execute(factory *osclientcmd.Factory, command []string, pod *kapi.Pod, in i
 }
 
 func getSDNRunningPods(kubeClient kclientset.Interface) ([]kapi.Pod, error) {
-	podList, err := kubeClient.Core().Pods(kapi.NamespaceAll).List(kapi.ListOptions{})
+	podList, err := kubeClient.Core().Pods(metav1.NamespaceAll).List(metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

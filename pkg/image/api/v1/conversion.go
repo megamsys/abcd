@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/conversion"
-	"k8s.io/kubernetes/pkg/runtime"
 
 	oapi "github.com/openshift/origin/pkg/api"
 	newer "github.com/openshift/origin/pkg/image/api"
@@ -32,7 +32,7 @@ func Convert_api_Image_To_v1_Image(in *newer.Image, out *Image, s conversion.Sco
 		gvString = "/" + gvString
 	}
 
-	version, err := unversioned.ParseGroupVersion(gvString)
+	version, err := schema.ParseGroupVersion(gvString)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func Convert_v1_Image_To_api_Image(in *Image, out *newer.Image, s conversion.Sco
 	}
 	if len(in.DockerImageMetadata.Raw) > 0 {
 		// TODO: add a way to default the expected kind and version of an object if not set
-		obj, err := api.Scheme.New(unversioned.GroupVersionKind{Version: version, Kind: "DockerImage"})
+		obj, err := api.Scheme.New(schema.GroupVersionKind{Version: version, Kind: "DockerImage"})
 		if err != nil {
 			return err
 		}
@@ -141,12 +141,14 @@ func Convert_v1_Image_To_api_Image(in *Image, out *newer.Image, s conversion.Sco
 }
 
 func Convert_v1_ImageStreamSpec_To_api_ImageStreamSpec(in *ImageStreamSpec, out *newer.ImageStreamSpec, s conversion.Scope) error {
+	out.LookupPolicy = newer.ImageLookupPolicy{Local: in.LookupPolicy.Local}
 	out.DockerImageRepository = in.DockerImageRepository
 	out.Tags = make(map[string]newer.TagReference)
 	return s.Convert(&in.Tags, &out.Tags, 0)
 }
 
 func Convert_api_ImageStreamSpec_To_v1_ImageStreamSpec(in *newer.ImageStreamSpec, out *ImageStreamSpec, s conversion.Scope) error {
+	out.LookupPolicy = ImageLookupPolicy{Local: in.LookupPolicy.Local}
 	out.DockerImageRepository = in.DockerImageRepository
 	if len(in.DockerImageRepository) > 0 {
 		// ensure that stored image references have no tag or ID, which was possible from 1.0.0 until 1.0.7
