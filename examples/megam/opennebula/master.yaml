@@ -27,7 +27,7 @@ message: |-
 
   For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
 labels:
-  template: opennebula-ephemeral-template1
+  template: opennebula-ephemeral-template
 objects:
 - kind: Service
   apiVersion: v1
@@ -70,16 +70,15 @@ objects:
           - name: ssh_private
             valueFrom:
               secretKeyRef:
-                name: ssh
+                name: "${SSH_NAME}"
                 key: ssh-privatekey
           - name: ssh_public
             valueFrom:
               secretKeyRef:
-                name: ssh
+                name: "${SSH_NAME}"
                 key: ssh-publickey
           ports:
           - containerPort: 9869
-            protocol: TCP
           resources:
             limits:
               memory: "${MEMORY_LIMIT}"
@@ -99,18 +98,8 @@ parameters:
   description: The name of the ABCD Service exposed for OpenNebula.
   value: onemaster
   required: true
-- name: ONE_USER
-  displayName: OpenNebua Username
-  description: Username for OpenNebula user.
-  value: oneadmin
-  required: true
-- name: ONE_DATASTORE
-  displayName: OpenNebula Datastore
-  description: Name of the OpenNebula datastore accessed.
-  value: datastore
-  required: true
-- name: ONE_VERSION
-  displayName: Version of OpenNebula
-  description: Version of OpenNebula image to be used (5.2 or latest).
-  value: 'latest'
+- name: SSH_NAME
+  displayName: Ssh
+  description: Specify the Secret key name
+  value: ssh
   required: true

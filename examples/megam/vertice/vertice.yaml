@@ -1,0 +1,103 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: vertice-gateway-nsqd
+  creationTimestamp:
+  annotations:
+    openshift.io/display-name: Vertice-Gateway-Nsqd
+    iconClass: icon-machine
+    tags: nsqd
+    template.openshift.io/long-description: This template provides a api server for verticegateway,deamon for vertice,queueing message system for nsqd
+    template.openshift.io/provider-display-name: Megam Systems.
+    template.openshift.io/documentation-url: https://docs.megam.io/abcd
+    template.openshift.io/support-url: https://github.com/megamsys/support
+message: |-
+
+  For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
+labels:
+  template: Vertice-Gateway-Nsqd-Template
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "${VERTICE_SERVICE_NAME}"
+    creationTimestamp:
+  spec:
+    ports:
+    - name: vertice
+      port: 7777
+      targetPort: 7777
+    - name: gateway
+      port: 9000
+      targetPort: 9000
+    - name: nsqd-ui
+      port: 4171
+      targetPort: 4171
+    - name: nsqd
+      port: 4151
+      targetPort: 4151
+    - name: nsqd1
+      port: 4150
+      targetPort: 4150
+    - name: nsqd2
+      port: 4160
+      targetPort: 4160
+    - name: nsqd3
+      port: 4161
+      targetPort: 4161
+    protocol: TCP
+    selector:
+      name: "${VERTICE_SERVICE_NAME}"
+    type: ClusterIP
+    sessionAffinity: None
+  status:
+    loadBalancer: {}
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "${VERTICE_SERVICE_NAME}"
+    creationTimestamp:
+  spec:
+    restartPolicy: Never
+    replicas: 1
+    selector:
+      name: "${VERTICE_SERVICE_NAME}"
+    template:
+      metadata:
+        creationTimestamp:
+        labels:
+          name: "${VERTICE_SERVICE_NAME}"
+      spec:
+        containers:
+        - name: vertice-gateway-nsqd
+          image: "megamio/docker_vertice:latest"
+          imagePullPolicy: "IfNotPresent"
+          ports:
+          - containerPort: 7777
+          - containerPort: 9000
+          - containerPort: 4171
+          - containerPort: 4150
+          - containerPort: 4151
+          - containerPort: 4160
+          - containerPort: 4161
+
+          resources:
+            limits:
+              memory: "${MEMORY_LIMIT}"
+          status: {}
+parameters:
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Maximum amount of memory the container can use.
+  value: 512Mi
+  required: true
+- name: NAMESPACE
+  displayName: Namespace
+  description: The OpenShift Namespace where the ImageStream resides.
+  value: openshift
+- name: VERTICE_SERVICE_NAME
+  displayName: Vertice-Gateway-Nsqd Service Name
+  description: The name of the ABCD Service exposed for Vertice-Gateway-Nsqd.
+  value: vertice-gateway-nsqd
+  required: true

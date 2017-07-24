@@ -1,0 +1,85 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: verticenilavu
+  creationTimestamp:
+  annotations:
+    openshift.io/display-name: VerticeNilavu
+    iconClass: icon-machine
+    template.openshift.io/long-description: This template provides a UI for VerticeNilavu
+    template.openshift.io/provider-display-name: Megam Systems.
+    template.openshift.io/documentation-url: https://docs.megam.io/abcd
+    template.openshift.io/support-url: https://github.com/megamsys/support
+message: |-
+
+  For more information about using this template, including OpenShift considerations, see https://github.com/megamsys/kubeshift.
+labels:
+  template: VerticeNilavu-Template
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "${NILAVU_SERVICE_NAME}"
+    creationTimestamp:
+  spec:
+    ports:
+    - name: nilavu
+      port: 8080
+      targetPort: 8080
+    - name: nginx
+      port: 80
+      targetPort: 80
+    - name: ssl
+      port: 443
+      targetPort: 443
+    protocol: TCP
+    selector:
+      name: "${NILAVU_SERVICE_NAME}"
+    type: ClusterIP
+    sessionAffinity: None
+  status:
+    loadBalancer: {}
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "${NILAVU_SERVICE_NAME}"
+    creationTimestamp:
+  spec:
+    restartPolicy: Never
+    replicas: 1
+    selector:
+      name: "${NILAVU_SERVICE_NAME}"
+    template:
+      metadata:
+        creationTimestamp:
+        labels:
+          name: "${NILAVU_SERVICE_NAME}"
+      spec:
+        containers:
+        - name: verticenilavu
+          image: "megamio/docker_nilavu:latest"
+          imagePullPolicy: "IfNotPresent"
+          ports:
+          - containerPort: 8080
+          - containerPort: 80
+          - containerPort: 443
+          resources:
+            limits:
+              memory: "${MEMORY_LIMIT}"
+          status: {}
+parameters:
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Maximum amount of memory the container can use.
+  value: 512Mi
+  required: true
+- name: NAMESPACE
+  displayName: Namespace
+  description: The OpenShift Namespace where the ImageStream resides.
+  value: openshift
+- name: NILAVU_SERVICE_NAME
+  displayName: VerticeNilavu Service Name
+  description: The name of the ABCD Service exposed for VerticeNilavu.
+  value: verticenilavu
+  required: true
